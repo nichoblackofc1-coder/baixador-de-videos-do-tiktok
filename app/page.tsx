@@ -3,13 +3,13 @@ import { TikSaveDownloader } from "@/components/tiksave-downloader"
 export default function Page() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-background">
-      {/* Background glows */}
+      {/* Background glows - cores do TikTok */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0"
         style={{
           background:
-            "radial-gradient(70% 60% at 12% 0%, color-mix(in oklch, var(--primary) 55%, transparent), transparent 60%), radial-gradient(70% 60% at 92% 108%, color-mix(in oklch, var(--accent) 45%, transparent), transparent 60%)",
+            "radial-gradient(60% 55% at 8% -5%, rgba(254, 44, 85, 0.55), transparent 60%), radial-gradient(55% 55% at 100% 105%, rgba(37, 244, 238, 0.45), transparent 60%), radial-gradient(45% 40% at 95% 0%, rgba(254, 44, 85, 0.25), transparent 70%)",
         }}
       />
 
