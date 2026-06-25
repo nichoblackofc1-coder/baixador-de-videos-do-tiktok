@@ -2,24 +2,18 @@ import { TikSaveDownloader } from "@/components/tiksave-downloader"
 
 export default function Page() {
   return (
-    <main
-      className="relative min-h-screen overflow-hidden"
-      style={{
-        background:
-          "linear-gradient(180deg, color-mix(in oklch, var(--primary) 10%, var(--background)) 0%, var(--background) 45%, color-mix(in oklch, var(--accent) 9%, var(--background)) 100%)",
-      }}
-    >
+    <main className="relative min-h-screen overflow-hidden bg-background">
       {/* Background glows */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
+        className="pointer-events-none absolute inset-0 z-0"
         style={{
           background:
-            "radial-gradient(60% 50% at 15% 0%, color-mix(in oklch, var(--primary) 38%, transparent), transparent 70%), radial-gradient(55% 50% at 90% 110%, color-mix(in oklch, var(--accent) 28%, transparent), transparent 70%)",
+            "radial-gradient(70% 60% at 12% 0%, color-mix(in oklch, var(--primary) 55%, transparent), transparent 60%), radial-gradient(70% 60% at 92% 108%, color-mix(in oklch, var(--accent) 45%, transparent), transparent 60%)",
         }}
       />
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-24 pt-10 sm:pt-12">
+      <div className="relative z-10 mx-auto w-full max-w-5xl px-4 pb-24 pt-10 sm:pt-12">
         <header className="mb-16 flex items-center justify-between sm:mb-20">
           <div className="text-2xl font-black tracking-tight">
             TikSave{" "}
