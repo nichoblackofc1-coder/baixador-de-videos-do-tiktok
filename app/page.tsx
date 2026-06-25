@@ -2,14 +2,20 @@ import { TikSaveDownloader } from "@/components/tiksave-downloader"
 
 export default function Page() {
   return (
-    <main className="relative min-h-screen overflow-hidden">
+    <main
+      className="relative min-h-screen overflow-hidden"
+      style={{
+        background:
+          "linear-gradient(180deg, color-mix(in oklch, var(--primary) 10%, var(--background)) 0%, var(--background) 45%, color-mix(in oklch, var(--accent) 9%, var(--background)) 100%)",
+      }}
+    >
       {/* Background glows */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10"
         style={{
           background:
-            "radial-gradient(circle at top left, color-mix(in oklch, var(--primary) 30%, transparent), transparent 35%), radial-gradient(circle at bottom right, color-mix(in oklch, var(--accent) 22%, transparent), transparent 40%)",
+            "radial-gradient(60% 50% at 15% 0%, color-mix(in oklch, var(--primary) 38%, transparent), transparent 70%), radial-gradient(55% 50% at 90% 110%, color-mix(in oklch, var(--accent) 28%, transparent), transparent 70%)",
         }}
       />
 
@@ -43,6 +49,37 @@ export default function Page() {
             <TikSaveDownloader />
           </div>
         </section>
+
+        <section className="mt-20 grid gap-4 sm:mt-24 sm:grid-cols-3">
+          {[
+            {
+              title: "Alta qualidade",
+              desc: "Baixa o MP4 em HD, na melhor resolução disponível do vídeo.",
+            },
+            {
+              title: "Sem marca d'água",
+              desc: "Vídeo limpo, sem logo do TikTok cobrindo a imagem.",
+            },
+            {
+              title: "Download direto",
+              desc: "O arquivo é salvo no seu aparelho sem abrir outra página.",
+            },
+          ].map((item) => (
+            <div
+              key={item.title}
+              className="rounded-3xl border border-border bg-card/50 p-6 text-left backdrop-blur"
+            >
+              <h3 className="text-lg font-bold">{item.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                {item.desc}
+              </p>
+            </div>
+          ))}
+        </section>
+
+        <footer className="mt-16 text-center text-xs text-muted-foreground">
+          TikSave Pro — use apenas para conteúdo que você tem direito de baixar.
+        </footer>
       </div>
     </main>
   )
