@@ -31,11 +31,53 @@ function buildDownloadHref(
   return `/api/download?${params.toString()}`
 }
 
+function safeFileName(name: string, ext: string) {
+  const base =
+    name
+      .replace(/[\\/:*?"<>|]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 60) || "tiktok"
+  return `${base}.${ext}`
+}
+
 export function TikSaveDownloader() {
   const [url, setUrl] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<VideoResult | null>(null)
+  const [downloading, setDownloading] = useState<"video" | "audio" | null>(null)
+
+  async function handleDownload(
+    fileUrl: string,
+    type: "video" | "audio",
+    name: string,
+  ) {
+    if (downloading) return
+    setError(null)
+    setDownloading(type)
+    try {
+      const res = await fetch(buildDownloadHref(fileUrl, type, name))
+      if (!res.ok) {
+        throw new Error("Não consegui baixar o arquivo. Tente novamente.")
+      }
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = objectUrl
+      link.download = safeFileName(name, type === "video" ? "mp4" : "mp3")
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(objectUrl)
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao baixar o arquivo.",
+      )
+    } finally {
+      setDownloading(null)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -161,22 +203,42 @@ export function TikSaveDownloader() {
             </p>
 
             <div className="mt-5 grid gap-3">
-              <a
-                href={buildDownloadHref(result.mp4, "video", result.title)}
-                className="inline-flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-3 font-extrabold text-primary-foreground transition hover:brightness-110"
+              <button
+                type="button"
+                onClick={() =>
+                  handleDownload(result.mp4, "video", result.title)
+                }
+                disabled={downloading !== null}
+                className="inline-flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-3 font-extrabold text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Download className="size-5" />
-                Baixar MP4 {result.quality === "HD" ? "em HD" : ""}
-              </a>
+                {downloading === "video" ? (
+                  <Loader2 className="size-5 animate-spin" />
+                ) : (
+                  <Download className="size-5" />
+                )}
+                {downloading === "video"
+                  ? "Baixando..."
+                  : `Baixar MP4 ${result.quality === "HD" ? "em HD" : "(qualidade máxima)"}`}
+              </button>
 
               {result.music ? (
-                <a
-                  href={buildDownloadHref(result.music, "audio", result.title)}
-                  className="inline-flex min-h-13 items-center justify-center gap-2 rounded-2xl border border-border bg-secondary px-6 py-3 font-semibold text-secondary-foreground transition hover:bg-muted"
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDownload(result.music, "audio", result.title)
+                  }
+                  disabled={downloading !== null}
+                  className="inline-flex min-h-13 items-center justify-center gap-2 rounded-2xl border border-border bg-secondary px-6 py-3 font-semibold text-secondary-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <Music className="size-5" />
-                  Baixar Áudio (MP3)
-                </a>
+                  {downloading === "audio" ? (
+                    <Loader2 className="size-5 animate-spin" />
+                  ) : (
+                    <Music className="size-5" />
+                  )}
+                  {downloading === "audio"
+                    ? "Baixando..."
+                    : "Baixar Áudio (MP3)"}
+                </button>
               ) : null}
 
               <a
