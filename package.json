@@ -11,9 +11,12 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@distube/ytdl-core": "^4.16.12",
     "@vercel/analytics": "1.6.1",
+    "btch-downloader": "^6.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "instagram-url-direct": "^2.0.7",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
     "react": "^19",

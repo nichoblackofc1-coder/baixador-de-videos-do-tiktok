@@ -16,27 +16,35 @@ import {
   BadgeCheck,
   Clock,
   Film,
+  Image as ImageIcon,
 } from "lucide-react"
+import {
+  detectPlatform,
+  SUPPORTED_PLATFORMS,
+  type PlatformId,
+} from "@/lib/platform-detector"
 
-type VideoResult = {
+type UniversalResult = {
+  platform: PlatformId | "other"
+  platformName: string
   title: string
   author: string
   authorUniqueId?: string
   authorAvatar?: string
   cover: string
+  mediaType: "video" | "image"
   quality: string
   mp4: string
-  music: string
+  downloadUrl?: string
+  music?: string
   musicTitle?: string
   duration: number | null
-  size?: number | null
-  hdSize?: number | null
   original: string
 }
 
 function buildDownloadHref(
   fileUrl: string,
-  type: "video" | "audio",
+  type: "video" | "audio" | "image",
   name: string,
 ) {
   const params = new URLSearchParams({ url: fileUrl, type, name })
@@ -49,7 +57,7 @@ function safeFileName(name: string, ext: string) {
       .replace(/[\\/:*?"<>|]+/g, " ")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 60) || "tiktok"
+      .slice(0, 60) || "download"
   return `${base}.${ext}`
 }
 
@@ -60,9 +68,9 @@ function formatDuration(seconds?: number | null) {
   return `${mins}:${secs < 10 ? "0" : ""}${secs}`
 }
 
-/** Renderiza o texto destacando hashtags do TikTok com cor diferenciada */
+/** Renderiza a legenda com hashtags destacadas */
 function FormattedCaption({ text }: { text: string }) {
-  if (!text) return <span>Vídeo do TikTok</span>
+  if (!text) return <span>Publicação sem legenda</span>
 
   const words = text.split(/(\s+)/)
   return (
@@ -88,11 +96,15 @@ export function TikSaveDownloader() {
   const [url, setUrl] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<VideoResult | null>(null)
-  const [downloadStarted, setDownloadStarted] = useState<"video" | "audio" | null>(null)
+  const [result, setResult] = useState<UniversalResult | null>(null)
+  const [downloadStarted, setDownloadStarted] = useState<
+    "video" | "audio" | "image" | null
+  >(null)
   const [copied, setCopied] = useState(false)
 
-  function handleTriggerDownload(type: "video" | "audio") {
+  const detectedPlatform = detectPlatform(url)
+
+  function handleTriggerDownload(type: "video" | "audio" | "image") {
     setDownloadStarted(type)
     setTimeout(() => {
       setDownloadStarted(null)
@@ -106,7 +118,7 @@ export function TikSaveDownloader() {
 
     const trimmed = url.trim()
     if (!trimmed) {
-      setError("Cole um link válido do TikTok.")
+      setError("Cole um link válido para baixar.")
       return
     }
 
@@ -120,12 +132,16 @@ export function TikSaveDownloader() {
       const data = await res.json()
 
       if (!res.ok) {
-        throw new Error(data.error || "Erro ao buscar o vídeo.")
+        throw new Error(data.error || "Não conseguimos processar este link.")
       }
 
-      setResult(data as VideoResult)
+      setResult(data as UniversalResult)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao buscar o vídeo.")
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Erro ao buscar a mídia. Verifique o link e tente novamente.",
+      )
     } finally {
       setLoading(false)
     }
@@ -141,7 +157,7 @@ export function TikSaveDownloader() {
         }
       }
     } catch {
-      // Falha silenciosa no clipboard se bloqueado
+      // Clipboard bloqueado
     }
   }
 
@@ -159,10 +175,45 @@ export function TikSaveDownloader() {
   }
 
   const durationStr = formatDuration(result?.duration)
+  const mainDownloadUrl = result
+    ? result.mediaType === "video"
+      ? result.mp4
+      : result.downloadUrl || result.cover
+    : ""
 
   return (
     <div className="mx-auto w-full max-w-4xl transition-all duration-300">
-      {/* Search box */}
+      {/* Badges de Redes Sociais Suportadas */}
+      <div className="mb-4 flex flex-wrap items-center justify-center gap-2">
+        <span className="text-xs font-semibold text-muted-foreground mr-1">
+          Suporte Universal:
+        </span>
+        {SUPPORTED_PLATFORMS.map((p) => {
+          const isCurrent = detectedPlatform?.id === p.id
+          return (
+            <span
+              key={p.id}
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all"
+              style={{
+                backgroundColor: isCurrent ? p.badgeBg : "rgba(255, 255, 255, 0.05)",
+                borderColor: isCurrent ? p.badgeBorder : "rgba(255, 255, 255, 0.1)",
+                color: isCurrent ? p.color : "rgba(255, 255, 255, 0.7)",
+                borderWidth: 1,
+                transform: isCurrent ? "scale(1.06)" : "scale(1)",
+                boxShadow: isCurrent ? `0 0 12px ${p.badgeBg}` : "none",
+              }}
+            >
+              <span
+                className="size-2 rounded-full"
+                style={{ backgroundColor: p.color }}
+              />
+              {p.name}
+            </span>
+          )
+        })}
+      </div>
+
+      {/* Caixa de Pesquisa com Detecção Automática */}
       <div className="rounded-3xl border border-white/10 bg-card/70 p-3 sm:p-5 shadow-2xl backdrop-blur-2xl">
         <form
           onSubmit={handleSubmit}
@@ -170,13 +221,13 @@ export function TikSaveDownloader() {
         >
           <div className="relative flex-1">
             <input
-              id="tiktok-url"
+              id="media-url"
               type="text"
               inputMode="url"
               autoComplete="off"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="Cole o link do vídeo aqui (ex: https://www.tiktok.com/@...)"
+              placeholder="Cole qualquer link (TikTok, Instagram, YouTube, Pinterest, Kwai...)"
               className="min-h-14 w-full rounded-2xl border border-white/10 bg-background/80 px-4 sm:px-5 pr-20 text-sm sm:text-base text-foreground placeholder:text-muted-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/30"
             />
             {!url && (
@@ -214,6 +265,29 @@ export function TikSaveDownloader() {
           </button>
         </form>
 
+        {/* Feedback de Detecção Automática em Tempo Real */}
+        {detectedPlatform && !error && (
+          <div className="mt-3 flex items-center gap-2 px-1">
+            <span className="text-xs text-muted-foreground">
+              Plataforma detectada:
+            </span>
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold"
+              style={{
+                backgroundColor: detectedPlatform.badgeBg,
+                color: detectedPlatform.color,
+                border: `1px solid ${detectedPlatform.badgeBorder}`,
+              }}
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{ backgroundColor: detectedPlatform.color }}
+              />
+              {detectedPlatform.name} ({detectedPlatform.label})
+            </span>
+          </div>
+        )}
+
         {error ? (
           <div
             role="alert"
@@ -225,72 +299,91 @@ export function TikSaveDownloader() {
         ) : null}
       </div>
 
-      {/* Result Card - Canvas Design Elegante, Responsivo e Profissional */}
+      {/* Card de Resultado em Estilo Canvas Universal */}
       {result ? (
         <div className="relative mt-8 overflow-hidden rounded-3xl border border-white/12 bg-card/90 p-5 sm:p-7 md:p-8 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)] backdrop-blur-3xl transition-all duration-300">
-          {/* Subtle top edge ambient reflection line */}
+          {/* Linha de reflexo sutil no topo */}
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent"
           />
 
-          {/* Top Status Bar */}
+          {/* Barra Superior com Status e Identificação da Rede */}
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3.5 py-1.5 text-xs sm:text-sm font-semibold text-emerald-400">
               <span className="relative flex size-2.5">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
               </span>
-              <span>Vídeo pronto para download</span>
+              <span>Conteúdo pronto para download</span>
             </div>
 
-            <button
-              type="button"
-              onClick={handleReset}
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-white/10 hover:text-foreground transition-all"
-            >
-              <RotateCcw className="size-3.5" />
-              Buscar outro vídeo
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-bold text-foreground">
+                Rede: {result.platformName}
+              </span>
+              <button
+                type="button"
+                onClick={handleReset}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-white/10 hover:text-foreground transition-all"
+              >
+                <RotateCcw className="size-3.5" />
+                Nova busca
+              </button>
+            </div>
           </div>
 
-          {/* Main Grid: Video Player + Info/Actions */}
+          {/* Grid Principal: Mídia (Vídeo ou Foto) + Painel de Download */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start text-left">
-            {/* Left Column: Player Vertical em Mockup Canvas */}
+            {/* Coluna Esquerda: Preview da Mídia */}
             <div className="lg:col-span-5 flex flex-col items-center">
-              <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-[310px] overflow-hidden rounded-[2.2rem] bg-black ring-1 ring-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.7)] group border border-white/5">
-                {/* Badges flutuantes sobre o vídeo */}
-                <div className="pointer-events-none absolute top-3.5 left-3.5 z-10 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md border border-white/15">
-                  <Film className="size-3 text-[#25F4EE]" />
-                  <span>{result.quality === "HD" ? "HD 1080p" : "MP4"}</span>
-                </div>
-
-                {durationStr && (
-                  <div className="pointer-events-none absolute top-3.5 right-3.5 z-10 flex items-center gap-1 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md border border-white/15">
-                    <Clock className="size-3 text-[#25F4EE]" />
-                    <span>{durationStr}</span>
+              {result.mediaType === "video" ? (
+                <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-[310px] overflow-hidden rounded-[2.2rem] bg-black ring-1 ring-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.7)] group border border-white/5">
+                  <div className="pointer-events-none absolute top-3.5 left-3.5 z-10 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md border border-white/15">
+                    <Film className="size-3 text-[#25F4EE]" />
+                    <span>{result.quality || "HD 1080p"}</span>
                   </div>
-                )}
 
-                {/* Player de Vídeo Nativo e Fluido */}
-                <video
-                  src={result.mp4}
-                  poster={result.cover}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className="h-full w-full object-contain bg-black"
-                />
-              </div>
+                  {durationStr && (
+                    <div className="pointer-events-none absolute top-3.5 right-3.5 z-10 flex items-center gap-1 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md border border-white/15">
+                      <Clock className="size-3 text-[#25F4EE]" />
+                      <span>{durationStr}</span>
+                    </div>
+                  )}
+
+                  <video
+                    src={result.mp4}
+                    poster={result.cover}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full object-contain bg-black"
+                  />
+                </div>
+              ) : (
+                <div className="relative max-w-[320px] w-full overflow-hidden rounded-3xl bg-black/50 ring-1 ring-white/15 shadow-2xl">
+                  <div className="pointer-events-none absolute top-3.5 left-3.5 z-10 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md border border-white/15">
+                    <ImageIcon className="size-3 text-[#25F4EE]" />
+                    <span>Imagem HD</span>
+                  </div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={result.downloadUrl || result.cover}
+                    alt={result.title}
+                    crossOrigin="anonymous"
+                    className="max-h-[420px] w-full object-contain rounded-2xl"
+                  />
+                </div>
+              )}
 
               <span className="mt-3 text-xs text-muted-foreground/75 flex items-center gap-1.5 font-medium">
-                <span>▶</span> Prévia oficial do TikTok
+                <span>▶</span> Prévia oficial de {result.platformName}
               </span>
             </div>
 
-            {/* Right Column: Informações do Criador & Ações de Download */}
+            {/* Coluna Direita: Informações e Botões de Download */}
             <div className="lg:col-span-7 flex flex-col justify-between space-y-4 sm:space-y-5">
-              {/* Autor & Perfil em Canvas Box */}
+              {/* Autor / Canal */}
               <div className="flex items-center gap-3.5 rounded-2xl border border-white/10 bg-white/[0.04] p-3.5 backdrop-blur-md shadow-sm hover:border-white/20 transition-all">
                 <div className="relative size-12 shrink-0 overflow-hidden rounded-full ring-2 ring-[#FE2C55]/70 bg-secondary flex items-center justify-center">
                   {result.authorAvatar ? (
@@ -316,7 +409,7 @@ export function TikSaveDownloader() {
                     <BadgeCheck className="size-4 text-[#25F4EE] shrink-0" />
                   </div>
                   <p className="truncate text-xs text-muted-foreground font-mono">
-                    @{result.authorUniqueId || result.author.toLowerCase().replace(/\s+/g, "")}
+                    {result.platformName} • {result.mediaType === "video" ? "Vídeo" : "Foto"}
                   </p>
                 </div>
 
@@ -325,21 +418,21 @@ export function TikSaveDownloader() {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="shrink-0 rounded-xl border border-white/10 bg-white/5 p-2 text-muted-foreground hover:bg-white/10 hover:text-foreground transition-all"
-                  title="Abrir no TikTok"
+                  title={`Abrir no ${result.platformName}`}
                 >
                   <ExternalLink className="size-4" />
                 </a>
               </div>
 
-              {/* Título e Hashtags */}
+              {/* Título / Legenda */}
               <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 shadow-sm">
                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80 mb-2">
-                  Legenda do Vídeo
+                  Legenda / Título
                 </h4>
                 <FormattedCaption text={result.title} />
               </div>
 
-              {/* Badges de Qualidade Harmonizados */}
+              {/* Badges de Qualidade */}
               <div className="flex flex-wrap gap-2">
                 <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400">
                   <Sparkles className="size-3.5" />
@@ -347,7 +440,7 @@ export function TikSaveDownloader() {
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-xl border border-[#25F4EE]/25 bg-[#25F4EE]/10 px-3 py-1.5 text-xs font-semibold text-[#25F4EE]">
                   <Film className="size-3.5" />
-                  {result.quality === "HD" ? "Qualidade Máxima HD" : "Qualidade Padrão"}
+                  {result.quality || "Qualidade Máxima"}
                 </span>
                 {result.music && (
                   <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300">
@@ -357,33 +450,58 @@ export function TikSaveDownloader() {
                 )}
               </div>
 
-              {/* Botões de Ação */}
+              {/* Botões de Download */}
               <div className="space-y-3 pt-1">
-                {/* Botão Principal: Baixar Vídeo MP4 - 100% DIRETO E AUTOMÁTICO */}
-                <a
-                  href={buildDownloadHref(result.mp4, "video", result.title)}
-                  download={safeFileName(result.title, "mp4")}
-                  onClick={() => handleTriggerDownload("video")}
-                  className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-[#FE2C55] px-6 py-4 font-black text-white shadow-[0_10px_25px_rgba(254,44,85,0.35)] transition-all hover:bg-[#e0264b] hover:shadow-[0_14px_30px_rgba(254,44,85,0.5)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
-                >
-                  {downloadStarted === "video" ? (
-                    <>
-                      <Check className="size-5 text-white" />
-                      <span className="text-base sm:text-lg tracking-wide">
-                        Download Iniciado Automaticamente!
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="size-5 transition-transform group-hover:-translate-y-0.5" />
-                      <span className="text-base sm:text-lg tracking-wide">
-                        Baixar Vídeo (MP4 {result.quality === "HD" ? "em HD" : "Original"})
-                      </span>
-                    </>
-                  )}
-                </a>
+                {/* Botão Principal: Download Direto Automático */}
+                {result.mediaType === "video" && result.mp4 ? (
+                  <a
+                    href={buildDownloadHref(result.mp4, "video", result.title)}
+                    download={safeFileName(result.title, "mp4")}
+                    onClick={() => handleTriggerDownload("video")}
+                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-[#FE2C55] px-6 py-4 font-black text-white shadow-[0_10px_25px_rgba(254,44,85,0.35)] transition-all hover:bg-[#e0264b] hover:shadow-[0_14px_30px_rgba(254,44,85,0.5)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
+                  >
+                    {downloadStarted === "video" ? (
+                      <>
+                        <Check className="size-5 text-white" />
+                        <span className="text-base sm:text-lg tracking-wide">
+                          Download Iniciado Automaticamente!
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="size-5 transition-transform group-hover:-translate-y-0.5" />
+                        <span className="text-base sm:text-lg tracking-wide">
+                          Baixar Vídeo ({result.quality || "MP4 em HD"})
+                        </span>
+                      </>
+                    )}
+                  </a>
+                ) : (
+                  <a
+                    href={buildDownloadHref(mainDownloadUrl, "image", result.title)}
+                    download={safeFileName(result.title, "jpg")}
+                    onClick={() => handleTriggerDownload("image")}
+                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-[#FE2C55] px-6 py-4 font-black text-white shadow-[0_10px_25px_rgba(254,44,85,0.35)] transition-all hover:bg-[#e0264b] hover:shadow-[0_14px_30px_rgba(254,44,85,0.5)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
+                  >
+                    {downloadStarted === "image" ? (
+                      <>
+                        <Check className="size-5 text-white" />
+                        <span className="text-base sm:text-lg tracking-wide">
+                          Download da Imagem Iniciado!
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="size-5 transition-transform group-hover:-translate-y-0.5" />
+                        <span className="text-base sm:text-lg tracking-wide">
+                          Baixar Imagem em Alta Resolução
+                        </span>
+                      </>
+                    )}
+                  </a>
+                )}
 
-                {/* Botão Secundário: Baixar Áudio MP3 - 100% DIRETO E AUTOMÁTICO */}
+                {/* Botão Secundário: Baixar Áudio MP3 */}
                 {result.music ? (
                   <a
                     href={buildDownloadHref(result.music, "audio", result.title)}
@@ -405,7 +523,7 @@ export function TikSaveDownloader() {
                   </a>
                 ) : null}
 
-                {/* Botões Utilitários (Copiar Link & Abrir no TikTok) */}
+                {/* Botões Utilitários */}
                 <div className="grid grid-cols-2 gap-2.5 pt-1">
                   <button
                     type="button"
@@ -432,16 +550,16 @@ export function TikSaveDownloader() {
                     className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/15 px-3 py-2 text-xs font-semibold text-foreground/80 hover:text-foreground transition-all"
                   >
                     <ExternalLink className="size-3.5" />
-                    <span>Ver no TikTok</span>
+                    <span>Ver no {result.platformName}</span>
                   </a>
                 </div>
               </div>
 
-              {/* Garantia do Servidor / Informação Segura */}
+              {/* Garantia do Servidor */}
               <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3.5 text-xs text-muted-foreground">
                 <ShieldCheck className="size-5 shrink-0 text-[#25F4EE] mt-0.5" />
                 <p className="leading-relaxed">
-                  <strong className="text-foreground">Download 100% direto pelo servidor:</strong> O arquivo é processado e salvo sem marca d&apos;água, livre de anúncios irritantes e sem bloqueios de CORS.
+                  <strong className="text-foreground">Download Universal e Seguro:</strong> Arquivo transferido direto pelo servidor sem marca d&apos;água, sem anúncios externos e sem bloqueios de navegador.
                 </p>
               </div>
             </div>
