@@ -84,23 +84,26 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       {
-        url: "/icon.png",
+        url: "/icon.svg?v=3",
+        type: "image/svg+xml",
+      },
+      {
+        url: "/favicon.ico?v=3",
+        sizes: "any",
+      },
+      {
+        url: "/icon-32x32.png?v=3",
+        sizes: "32x32",
         type: "image/png",
       },
       {
-        url: "/favicon.ico",
-      },
-      {
-        url: "/icon-light-32x32.png",
-        media: "(prefers-color-scheme: light)",
-      },
-      {
-        url: "/icon-dark-32x32.png",
-        media: "(prefers-color-scheme: dark)",
+        url: "/icon.png?v=3",
+        sizes: "512x512",
+        type: "image/png",
       },
     ],
-    apple: "/apple-icon.png",
-    shortcut: "/favicon.ico",
+    apple: "/apple-icon.png?v=3",
+    shortcut: "/favicon.ico?v=3",
   },
   verification: {
     google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || "",
@@ -117,16 +120,15 @@ const jsonLd = {
   "@type": "WebApplication",
   name: "Save Web",
   url: siteUrl,
+  description:
+    "Baixe vídeos e fotos do TikTok, Instagram, YouTube, Pinterest e Kwai em alta resolução sem marca d'água.",
   applicationCategory: "MultimediaApplication",
   operatingSystem: "All",
-  browserRequirements: "Requires JavaScript. Requires HTML5.",
   offers: {
     "@type": "Offer",
     price: "0",
     priceCurrency: "BRL",
   },
-  description:
-    "Ferramenta online para baixar vídeos do TikTok, Instagram, YouTube, Pinterest e Kwai em MP4 HD e áudios em MP3 sem marca d'água gratuitamente.",
 }
 
 import { LanguageProvider } from "@/context/language-context"
@@ -143,6 +145,11 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <link rel="icon" href="/icon.svg?v=3" type="image/svg+xml" />
+        <link rel="icon" href="/favicon.ico?v=3" sizes="any" />
+        <link rel="icon" href="/icon-32x32.png?v=3" type="image/png" sizes="32x32" />
+        <link rel="icon" href="/icon.png?v=3" type="image/png" sizes="512x512" />
+        <link rel="apple-touch-icon" href="/apple-icon.png?v=3" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
