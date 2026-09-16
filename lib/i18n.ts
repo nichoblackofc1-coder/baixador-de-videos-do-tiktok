@@ -1,4 +1,4 @@
-export type SupportedLanguage = "pt" | "en" | "es" | "fr" | "de" | "it"
+export type SupportedLanguage = "pt" | "en" | "es" | "fr" | "de" | "it" | "ru"
 
 export interface LanguageOption {
   code: SupportedLanguage
@@ -10,6 +10,7 @@ export interface LanguageOption {
 export const SUPPORTED_LANGUAGES: LanguageOption[] = [
   { code: "pt", name: "Português", flag: "🇧🇷", country: "Brasil / Portugal" },
   { code: "en", name: "English", flag: "🇺🇸", country: "United States / Global" },
+  { code: "ru", name: "Русский", flag: "🇷🇺", country: "Россия" },
   { code: "es", name: "Español", flag: "🇪🇸", country: "España / Latinoamérica" },
   { code: "fr", name: "Français", flag: "🇫🇷", country: "France / Canada" },
   { code: "de", name: "Deutsch", flag: "🇩🇪", country: "Deutschland" },
@@ -331,27 +332,59 @@ export const TRANSLATIONS: Record<SupportedLanguage, Translations> = {
     footerText:
       "Save Web • Strumento gratuito per il download di contenuti multimediali pubblici autorizzati. Supporta TikTok, Instagram, YouTube, Pinterest, Kwai, Twitter/X e Facebook.",
   },
+  ru: {
+    headerBadge: "Мультиплатформенный режим",
+    heroTag: "Универсальный загрузчик без водяных знаков",
+    heroTitlePrefix: "Скачивайте видео и фото из ",
+    heroTitleGradient: "Любых Социальных Сетей",
+    heroSubtitle:
+      "Вставьте ссылку на TikTok, Instagram, YouTube, Pinterest, Kwai или X. Платформа определяется автоматически для прямой загрузки на ваше устройство в максимальном качестве.",
+    heroPlatformsHighlight: "TikTok, Instagram, YouTube, Pinterest, Kwai или X",
+    inputPlaceholder: "Вставьте ссылку на TikTok, Instagram, YouTube, Pinterest, Kwai...",
+    pasteButton: "Вставить",
+    downloadButton: "Скачать Медиа",
+    processingButton: "Обработка...",
+    detectedPlatformLabel: "Определенная сеть:",
+    readyStatus: "Контент готов к скачиванию",
+    networkLabel: "Сеть:",
+    newSearchButton: "Новый поиск",
+    previewNotice: "Официальный предпросмотр",
+    qualityLabel: "Максимальное качество",
+    noWatermark: "Без водяных знаков",
+    maxQuality: "Оригинальное качество",
+    audioAvailable: "Аудио доступно",
+    captionLabel: "Подпись / Название",
+    noCaption: "Публикация без описания",
+    downloadVideo: "Скачать Видео",
+    downloadImage: "Скачать Фото в высоком разрешении",
+    downloadAudio: "Скачать только аудио (MP3)",
+    downloadStarted: "Загрузка успешно началась!",
+    downloadImageStarted: "Загрузка изображения началась!",
+    downloadAudioStarted: "Загрузка аудио началась!",
+    copyLink: "Копировать ссылку",
+    linkCopied: "Ссылка скопирована!",
+    viewOriginal: "Открыть в",
+    emptyUrlError: "Вставьте действительную ссылку для скачивания.",
+    genericFetchError: "Не удалось получить файл по этой ссылке. Убедитесь, что публикация общедоступна.",
+    features: {
+      title1: "Автоматическое определение",
+      desc1: "Просто вставьте ссылку. Система мгновенно распознает TikTok, Instagram, YouTube, Pinterest или Kwai.",
+      title2: "Без водяных знаков",
+      desc2: "Четкие видеофайлы в качестве Full HD 1080p и фото в исходном максимальном разрешении.",
+      title3: "Прямая загрузка",
+      desc3: "Мгновенная загрузка на устройство через браузер без навязчивой рекламы и регистрации.",
+    },
+    footerText:
+      "Save Web • Бесплатный инструмент для загрузки разрешенных общедоступных медиафайлов. Поддерживает TikTok, Instagram, YouTube, Pinterest, Kwai, Twitter/X и Facebook.",
+  },
 }
 
 /**
  * Detects visitor language automatically based on browser environment.
- * If Spanish-speaking country -> 'es'
- * If Portuguese-speaking country -> 'pt'
- * If French -> 'fr'
- * If German -> 'de'
- * If Italian -> 'it'
- * Any other country/region (including US, UK, Canada, Australia, Asia, etc.) -> 'en'
  */
 export function detectInitialLanguage(): SupportedLanguage {
   if (typeof window === "undefined") return "pt"
 
-  // 1. Saved preference in localStorage
-  try {
-    const saved = localStorage.getItem("user_lang") as SupportedLanguage
-    if (saved && TRANSLATIONS[saved]) return saved
-  } catch {}
-
-  // 2. Browser language detection
   const navLangs = [
     ...(navigator.languages || []),
     navigator.language,
@@ -360,6 +393,7 @@ export function detectInitialLanguage(): SupportedLanguage {
 
   for (const raw of navLangs) {
     const code = raw.toLowerCase().split("-")[0]
+    if (code === "ru") return "ru"
     if (code === "pt") return "pt"
     if (code === "es") return "es"
     if (code === "en") return "en"
@@ -368,6 +402,43 @@ export function detectInitialLanguage(): SupportedLanguage {
     if (code === "it") return "it"
   }
 
-  // 3. Fallback to English for worldwide audience
+  return "en"
+}
+
+/**
+ * Maps 2-letter ISO country code to supported website language.
+ * Russia/CIS -> 'ru'
+ * USA/Global -> 'en'
+ * Brazil/Portugal -> 'pt'
+ * Hispanic countries -> 'es'
+ * France/Francophone -> 'fr'
+ * Germany/Austria -> 'de'
+ * Italy -> 'it'
+ */
+export function mapCountryToLanguage(countryCode: string): SupportedLanguage {
+  const code = (countryCode || "").toUpperCase().trim()
+
+  // Rússia e países de língua russa
+  if (["RU", "BY", "KZ", "KG", "TJ", "UZ", "UA"].includes(code)) return "ru"
+
+  // Brasil, Portugal e lusófonos
+  if (["BR", "PT", "AO", "MZ", "CV", "GW", "ST", "TL"].includes(code)) return "pt"
+
+  // Espanha e América Latina
+  if ([
+    "ES", "MX", "AR", "CO", "CL", "PE", "VE", "EC", "GT", "CU",
+    "BO", "DO", "HN", "PY", "SV", "NI", "CR", "PA", "UY", "GQ"
+  ].includes(code)) return "es"
+
+  // França e países francófonos
+  if (["FR", "BE", "CH", "MC", "SN", "CI", "CM", "CD", "MG", "ML"].includes(code)) return "fr"
+
+  // Alemanha e Áustria
+  if (["DE", "AT", "LI", "LU"].includes(code)) return "de"
+
+  // Itália
+  if (["IT", "SM", "VA"].includes(code)) return "it"
+
+  // Estados Unidos, Reino Unido, Canadá, Austrália e fallback global
   return "en"
 }
