@@ -167,3 +167,13 @@
     @apply font-sans;
   }
 }
+
+/* Ocultar indicador N do Next.js */
+nextjs-portal,
+[data-nextjs-dev-tools-button],
+[data-nextjs-toast] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
