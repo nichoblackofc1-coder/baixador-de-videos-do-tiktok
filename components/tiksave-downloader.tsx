@@ -12,7 +12,6 @@ import {
   Check,
   Copy,
   Sparkles,
-  ShieldCheck,
   BadgeCheck,
   Clock,
   Film,
@@ -23,6 +22,7 @@ import {
   SUPPORTED_PLATFORMS,
   type PlatformId,
 } from "@/lib/platform-detector"
+import { useLanguage } from "@/context/language-context"
 
 type UniversalResult = {
   platform: PlatformId | "other"
@@ -68,19 +68,19 @@ function formatDuration(seconds?: number | null) {
   return `${mins}:${secs < 10 ? "0" : ""}${secs}`
 }
 
-/** Renderiza a legenda com hashtags destacadas */
-function FormattedCaption({ text }: { text: string }) {
-  if (!text) return <span>Publicação sem legenda</span>
+/** Renderiza a legenda com hashtags destacadas em azul refinado */
+function FormattedCaption({ text, emptyText }: { text: string; emptyText: string }) {
+  if (!text) return <span className="text-slate-500">{emptyText}</span>
 
   const words = text.split(/(\s+)/)
   return (
-    <p className="text-balance text-base sm:text-lg font-medium leading-snug text-foreground/90">
+    <p className="text-balance text-base font-medium leading-relaxed text-slate-800">
       {words.map((part, index) => {
         if (part.startsWith("#") && part.length > 1) {
           return (
             <span
               key={index}
-              className="text-[#25F4EE] font-semibold hover:underline cursor-default"
+              className="text-blue-600 font-semibold hover:underline cursor-default"
             >
               {part}
             </span>
@@ -93,6 +93,7 @@ function FormattedCaption({ text }: { text: string }) {
 }
 
 export function TikSaveDownloader() {
+  const { t } = useLanguage()
   const [url, setUrl] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -118,7 +119,7 @@ export function TikSaveDownloader() {
 
     const trimmed = url.trim()
     if (!trimmed) {
-      setError("Cole um link válido para baixar.")
+      setError(t.emptyUrlError)
       return
     }
 
@@ -132,7 +133,7 @@ export function TikSaveDownloader() {
       const data = await res.json()
 
       if (!res.ok) {
-        throw new Error(data.error || "Não conseguimos processar este link.")
+        throw new Error(data.error || t.genericFetchError)
       }
 
       setResult(data as UniversalResult)
@@ -140,7 +141,7 @@ export function TikSaveDownloader() {
       setError(
         err instanceof Error
           ? err.message
-          : "Erro ao buscar a mídia. Verifique o link e tente novamente.",
+          : t.genericFetchError,
       )
     } finally {
       setLoading(false)
@@ -183,28 +184,30 @@ export function TikSaveDownloader() {
 
   return (
     <div className="mx-auto w-full max-w-4xl transition-all duration-300">
-      {/* Badges de Redes Sociais Suportadas */}
+      {/* Badges de Redes Sociais Suportadas - Estilo Light Canvas */}
       <div className="mb-4 flex flex-wrap items-center justify-center gap-2">
-        <span className="text-xs font-semibold text-muted-foreground mr-1">
-          Suporte Universal:
+        <span className="text-xs font-medium text-slate-500 mr-1">
+          {t.networkLabel}
         </span>
         {SUPPORTED_PLATFORMS.map((p) => {
           const isCurrent = detectedPlatform?.id === p.id
           return (
             <span
               key={p.id}
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all"
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all duration-150"
               style={{
-                backgroundColor: isCurrent ? p.badgeBg : "rgba(255, 255, 255, 0.05)",
-                borderColor: isCurrent ? p.badgeBorder : "rgba(255, 255, 255, 0.1)",
-                color: isCurrent ? p.color : "rgba(255, 255, 255, 0.7)",
+                backgroundColor: isCurrent ? p.badgeBg : "#FFFFFF",
+                borderColor: isCurrent ? p.badgeBorder : "#E2E8F0",
+                color: isCurrent ? p.badgeText : "#475569",
                 borderWidth: 1,
-                transform: isCurrent ? "scale(1.06)" : "scale(1)",
-                boxShadow: isCurrent ? `0 0 12px ${p.badgeBg}` : "none",
+                boxShadow: isCurrent
+                  ? "0 2px 8px -1px rgba(37, 99, 235, 0.12)"
+                  : "0 1px 2px rgba(0,0,0,0.03)",
+                transform: isCurrent ? "scale(1.04)" : "scale(1)",
               }}
             >
               <span
-                className="size-2 rounded-full"
+                className="size-1.5 rounded-full shrink-0"
                 style={{ backgroundColor: p.color }}
               />
               {p.name}
@@ -213,8 +216,8 @@ export function TikSaveDownloader() {
         })}
       </div>
 
-      {/* Caixa de Pesquisa com Detecção Automática */}
-      <div className="rounded-3xl border border-white/10 bg-card/70 p-3 sm:p-5 shadow-2xl backdrop-blur-2xl">
+      {/* Caixa de Pesquisa com Detecção Automática - Estilo Light Canvas */}
+      <div className="rounded-2xl sm:rounded-3xl border border-slate-200/90 bg-white p-3 sm:p-4 shadow-[0_10px_35px_-5px_rgba(0,0,0,0.06),0_2px_6px_rgba(0,0,0,0.03)]">
         <form
           onSubmit={handleSubmit}
           className="flex flex-col gap-3 sm:flex-row items-stretch"
@@ -227,23 +230,23 @@ export function TikSaveDownloader() {
               autoComplete="off"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="Cole qualquer link (TikTok, Instagram, YouTube, Pinterest, Kwai...)"
-              className="min-h-14 w-full rounded-2xl border border-white/10 bg-background/80 px-4 sm:px-5 pr-20 text-sm sm:text-base text-foreground placeholder:text-muted-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/30"
+              placeholder={t.inputPlaceholder}
+              className="min-h-14 w-full rounded-2xl border border-slate-200 bg-slate-50/70 px-4 sm:px-5 pr-20 text-sm sm:text-base text-slate-900 placeholder:text-slate-400 outline-none transition focus:bg-white focus:border-blue-600 focus:ring-4 focus:ring-blue-600/10"
             />
             {!url && (
               <button
                 type="button"
                 onClick={handlePaste}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl bg-white/5 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-white/10 hover:text-foreground transition"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl bg-slate-200/60 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition cursor-pointer"
               >
-                Colar
+                {t.pasteButton}
               </button>
             )}
             {url && (
               <button
                 type="button"
                 onClick={() => setUrl("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-xs text-muted-foreground hover:bg-white/10 hover:text-foreground transition"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
                 title="Limpar"
               >
                 ✕
@@ -254,33 +257,33 @@ export function TikSaveDownloader() {
           <button
             type="submit"
             disabled={loading}
-            className="inline-flex min-h-14 items-center justify-center gap-2.5 rounded-2xl bg-[#FE2C55] px-8 text-base font-black text-white shadow-lg shadow-[#FE2C55]/25 transition-all hover:bg-[#e42049] hover:shadow-[#FE2C55]/40 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 shrink-0"
+            className="inline-flex min-h-14 items-center justify-center gap-2.5 rounded-2xl bg-blue-600 px-8 text-base font-bold text-white shadow-md shadow-blue-500/25 transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 shrink-0 cursor-pointer"
           >
             {loading ? (
               <Loader2 className="size-5 animate-spin" />
             ) : (
               <Search className="size-5" />
             )}
-            {loading ? "Processando..." : "Baixar Agora"}
+            {loading ? t.processingButton : t.downloadButton}
           </button>
         </form>
 
         {/* Feedback de Detecção Automática em Tempo Real */}
         {detectedPlatform && !error && (
           <div className="mt-3 flex items-center gap-2 px-1">
-            <span className="text-xs text-muted-foreground">
-              Plataforma detectada:
+            <span className="text-xs text-slate-500 font-medium">
+              {t.detectedPlatformLabel}
             </span>
             <span
               className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold"
               style={{
                 backgroundColor: detectedPlatform.badgeBg,
-                color: detectedPlatform.color,
+                color: detectedPlatform.badgeText,
                 border: `1px solid ${detectedPlatform.badgeBorder}`,
               }}
             >
               <span
-                className="size-1.5 rounded-full"
+                className="size-1.5 rounded-full shrink-0"
                 style={{ backgroundColor: detectedPlatform.color }}
               />
               {detectedPlatform.name} ({detectedPlatform.label})
@@ -291,44 +294,38 @@ export function TikSaveDownloader() {
         {error ? (
           <div
             role="alert"
-            className="mt-4 flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground"
+            className="mt-4 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
           >
-            <AlertCircle className="size-4 shrink-0 text-primary" />
-            <span className="text-foreground">{error}</span>
+            <AlertCircle className="size-4 shrink-0 text-red-600" />
+            <span>{error}</span>
           </div>
         ) : null}
       </div>
 
-      {/* Card de Resultado em Estilo Canvas Universal */}
+      {/* Card de Resultado em Estilo Canvas Light */}
       {result ? (
-        <div className="relative mt-8 overflow-hidden rounded-3xl border border-white/12 bg-card/90 p-5 sm:p-7 md:p-8 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)] backdrop-blur-3xl transition-all duration-300">
-          {/* Linha de reflexo sutil no topo */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent"
-          />
-
+        <div className="relative mt-8 overflow-hidden rounded-3xl border border-slate-200/90 bg-white p-5 sm:p-7 md:p-8 shadow-[0_20px_45px_-12px_rgba(0,0,0,0.08),0_4px_16px_rgba(0,0,0,0.03)] transition-all duration-300">
           {/* Barra Superior com Status e Identificação da Rede */}
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3.5 py-1.5 text-xs sm:text-sm font-semibold text-emerald-400">
-              <span className="relative flex size-2.5">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs sm:text-sm font-semibold text-emerald-700">
+              <span className="relative flex size-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+                <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
               </span>
-              <span>Conteúdo pronto para download</span>
+              <span>{t.readyStatus}</span>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-bold text-foreground">
-                Rede: {result.platformName}
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-800">
+                {t.networkLabel} {result.platformName}
               </span>
               <button
                 type="button"
                 onClick={handleReset}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-white/10 hover:text-foreground transition-all"
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition-all cursor-pointer"
               >
-                <RotateCcw className="size-3.5" />
-                Nova busca
+                <RotateCcw className="size-3" />
+                {t.newSearchButton}
               </button>
             </div>
           </div>
@@ -338,15 +335,15 @@ export function TikSaveDownloader() {
             {/* Coluna Esquerda: Preview da Mídia */}
             <div className="lg:col-span-5 flex flex-col items-center">
               {result.mediaType === "video" ? (
-                <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-[310px] overflow-hidden rounded-[2.2rem] bg-black ring-1 ring-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.7)] group border border-white/5">
-                  <div className="pointer-events-none absolute top-3.5 left-3.5 z-10 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md border border-white/15">
-                    <Film className="size-3 text-[#25F4EE]" />
+                <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-[310px] overflow-hidden rounded-2xl bg-slate-950 shadow-lg border border-slate-200/80 group">
+                  <div className="pointer-events-none absolute top-3 left-3 z-10 flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md">
+                    <Film className="size-3 text-blue-400" />
                     <span>{result.quality || "HD 1080p"}</span>
                   </div>
 
                   {durationStr && (
-                    <div className="pointer-events-none absolute top-3.5 right-3.5 z-10 flex items-center gap-1 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md border border-white/15">
-                      <Clock className="size-3 text-[#25F4EE]" />
+                    <div className="pointer-events-none absolute top-3 right-3 z-10 flex items-center gap-1 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
+                      <Clock className="size-3 text-blue-400" />
                       <span>{durationStr}</span>
                     </div>
                   )}
@@ -361,10 +358,10 @@ export function TikSaveDownloader() {
                   />
                 </div>
               ) : (
-                <div className="relative max-w-[320px] w-full overflow-hidden rounded-3xl bg-black/50 ring-1 ring-white/15 shadow-2xl">
-                  <div className="pointer-events-none absolute top-3.5 left-3.5 z-10 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md border border-white/15">
-                    <ImageIcon className="size-3 text-[#25F4EE]" />
-                    <span>Imagem HD</span>
+                <div className="relative max-w-[320px] w-full overflow-hidden rounded-2xl bg-slate-100 shadow-md border border-slate-200">
+                  <div className="pointer-events-none absolute top-3 left-3 z-10 flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md">
+                    <ImageIcon className="size-3 text-blue-400" />
+                    <span>{t.downloadImage}</span>
                   </div>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -376,16 +373,16 @@ export function TikSaveDownloader() {
                 </div>
               )}
 
-              <span className="mt-3 text-xs text-muted-foreground/75 flex items-center gap-1.5 font-medium">
-                <span>▶</span> Prévia oficial de {result.platformName}
+              <span className="mt-3 text-xs text-slate-500 flex items-center gap-1.5 font-medium">
+                <span>▶</span> {t.previewNotice} {result.platformName}
               </span>
             </div>
 
             {/* Coluna Direita: Informações e Botões de Download */}
             <div className="lg:col-span-7 flex flex-col justify-between space-y-4 sm:space-y-5">
               {/* Autor / Canal */}
-              <div className="flex items-center gap-3.5 rounded-2xl border border-white/10 bg-white/[0.04] p-3.5 backdrop-blur-md shadow-sm hover:border-white/20 transition-all">
-                <div className="relative size-12 shrink-0 overflow-hidden rounded-full ring-2 ring-[#FE2C55]/70 bg-secondary flex items-center justify-center">
+              <div className="flex items-center gap-3.5 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5 shadow-xs">
+                <div className="relative size-12 shrink-0 overflow-hidden rounded-full ring-2 ring-blue-600/30 bg-white flex items-center justify-center shadow-xs">
                   {result.authorAvatar ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -395,7 +392,7 @@ export function TikSaveDownloader() {
                       className="size-full object-cover"
                     />
                   ) : (
-                    <span className="font-bold text-lg text-foreground">
+                    <span className="font-bold text-lg text-slate-800">
                       {result.author.charAt(0).toUpperCase()}
                     </span>
                   )}
@@ -403,12 +400,12 @@ export function TikSaveDownloader() {
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <h3 className="truncate text-base font-bold text-foreground">
+                    <h3 className="truncate text-base font-bold text-slate-900">
                       {result.author}
                     </h3>
-                    <BadgeCheck className="size-4 text-[#25F4EE] shrink-0" />
+                    <BadgeCheck className="size-4 text-blue-600 shrink-0" />
                   </div>
-                  <p className="truncate text-xs text-muted-foreground font-mono">
+                  <p className="truncate text-xs text-slate-500 font-medium">
                     {result.platformName} • {result.mediaType === "video" ? "Vídeo" : "Foto"}
                   </p>
                 </div>
@@ -417,35 +414,35 @@ export function TikSaveDownloader() {
                   href={result.original}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="shrink-0 rounded-xl border border-white/10 bg-white/5 p-2 text-muted-foreground hover:bg-white/10 hover:text-foreground transition-all"
-                  title={`Abrir no ${result.platformName}`}
+                  className="shrink-0 rounded-xl border border-slate-200 bg-white p-2 text-slate-500 hover:text-slate-900 hover:border-slate-300 shadow-2xs transition-all"
+                  title={`${t.viewOriginal} ${result.platformName}`}
                 >
                   <ExternalLink className="size-4" />
                 </a>
               </div>
 
               {/* Título / Legenda */}
-              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 shadow-sm">
-                <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80 mb-2">
-                  Legenda / Título
+              <div className="rounded-2xl border border-slate-200/80 bg-slate-50/40 p-4">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                  {t.captionLabel}
                 </h4>
-                <FormattedCaption text={result.title} />
+                <FormattedCaption text={result.title} emptyText={t.noCaption} />
               </div>
 
               {/* Badges de Qualidade */}
               <div className="flex flex-wrap gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400">
-                  <Sparkles className="size-3.5" />
-                  Sem Marca D&apos;água
+                <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                  <Sparkles className="size-3.5 text-emerald-600" />
+                  {t.noWatermark}
                 </span>
-                <span className="inline-flex items-center gap-1.5 rounded-xl border border-[#25F4EE]/25 bg-[#25F4EE]/10 px-3 py-1.5 text-xs font-semibold text-[#25F4EE]">
-                  <Film className="size-3.5" />
-                  {result.quality || "Qualidade Máxima"}
+                <span className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
+                  <Film className="size-3.5 text-blue-600" />
+                  {result.quality || t.maxQuality}
                 </span>
                 {result.music && (
-                  <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300">
-                    <Music2 className="size-3.5" />
-                    Áudio Disponível
+                  <span className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700">
+                    <Music2 className="size-3.5 text-indigo-600" />
+                    {t.audioAvailable}
                   </span>
                 )}
               </div>
@@ -458,20 +455,20 @@ export function TikSaveDownloader() {
                     href={buildDownloadHref(result.mp4, "video", result.title)}
                     download={safeFileName(result.title, "mp4")}
                     onClick={() => handleTriggerDownload("video")}
-                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-[#FE2C55] px-6 py-4 font-black text-white shadow-[0_10px_25px_rgba(254,44,85,0.35)] transition-all hover:bg-[#e0264b] hover:shadow-[0_14px_30px_rgba(254,44,85,0.5)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
+                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 font-bold text-white shadow-md shadow-blue-500/25 transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
                   >
                     {downloadStarted === "video" ? (
                       <>
                         <Check className="size-5 text-white" />
                         <span className="text-base sm:text-lg tracking-wide">
-                          Download Iniciado Automaticamente!
+                          {t.downloadStarted}
                         </span>
                       </>
                     ) : (
                       <>
                         <Download className="size-5 transition-transform group-hover:-translate-y-0.5" />
                         <span className="text-base sm:text-lg tracking-wide">
-                          Baixar Vídeo ({result.quality || "MP4 em HD"})
+                          {t.downloadVideo} ({result.quality || "MP4 HD"})
                         </span>
                       </>
                     )}
@@ -481,20 +478,20 @@ export function TikSaveDownloader() {
                     href={buildDownloadHref(mainDownloadUrl, "image", result.title)}
                     download={safeFileName(result.title, "jpg")}
                     onClick={() => handleTriggerDownload("image")}
-                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-[#FE2C55] px-6 py-4 font-black text-white shadow-[0_10px_25px_rgba(254,44,85,0.35)] transition-all hover:bg-[#e0264b] hover:shadow-[0_14px_30px_rgba(254,44,85,0.5)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
+                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 font-bold text-white shadow-md shadow-blue-500/25 transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
                   >
                     {downloadStarted === "image" ? (
                       <>
                         <Check className="size-5 text-white" />
                         <span className="text-base sm:text-lg tracking-wide">
-                          Download da Imagem Iniciado!
+                          {t.downloadImageStarted}
                         </span>
                       </>
                     ) : (
                       <>
                         <Download className="size-5 transition-transform group-hover:-translate-y-0.5" />
                         <span className="text-base sm:text-lg tracking-wide">
-                          Baixar Imagem em Alta Resolução
+                          {t.downloadImage}
                         </span>
                       </>
                     )}
@@ -507,17 +504,17 @@ export function TikSaveDownloader() {
                     href={buildDownloadHref(result.music, "audio", result.title)}
                     download={safeFileName(result.title, "mp3")}
                     onClick={() => handleTriggerDownload("audio")}
-                    className="flex w-full min-h-12 items-center justify-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.05] hover:bg-white/[0.1] hover:border-white/20 px-6 py-3 font-bold text-white transition-all active:scale-[0.99] text-sm sm:text-base cursor-pointer"
+                    className="flex w-full min-h-12 items-center justify-center gap-2.5 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 px-6 py-3 font-semibold text-slate-800 shadow-2xs transition-all active:scale-[0.99] text-sm sm:text-base cursor-pointer"
                   >
                     {downloadStarted === "audio" ? (
                       <>
-                        <Check className="size-4 text-emerald-400" />
-                        <span>Download do Áudio Iniciado!</span>
+                        <Check className="size-4 text-emerald-600" />
+                        <span className="text-emerald-700 font-bold">{t.downloadAudioStarted}</span>
                       </>
                     ) : (
                       <>
-                        <Music2 className="size-4 text-[#25F4EE]" />
-                        <span>Baixar Apenas Áudio (MP3)</span>
+                        <Music2 className="size-4 text-blue-600" />
+                        <span>{t.downloadAudio}</span>
                       </>
                     )}
                   </a>
@@ -528,17 +525,17 @@ export function TikSaveDownloader() {
                   <button
                     type="button"
                     onClick={handleCopyLink}
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/15 px-3 py-2 text-xs font-semibold text-foreground/80 hover:text-foreground transition-all"
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition-all cursor-pointer"
                   >
                     {copied ? (
                       <>
-                        <Check className="size-3.5 text-emerald-400" />
-                        <span className="text-emerald-400 font-bold">Link Copiado!</span>
+                        <Check className="size-3.5 text-emerald-600" />
+                        <span className="text-emerald-700 font-bold">{t.linkCopied}</span>
                       </>
                     ) : (
                       <>
-                        <Copy className="size-3.5" />
-                        <span>Copiar Link</span>
+                        <Copy className="size-3.5 text-slate-500" />
+                        <span>{t.copyLink}</span>
                       </>
                     )}
                   </button>
@@ -547,20 +544,12 @@ export function TikSaveDownloader() {
                     href={result.original}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/15 px-3 py-2 text-xs font-semibold text-foreground/80 hover:text-foreground transition-all"
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition-all cursor-pointer"
                   >
-                    <ExternalLink className="size-3.5" />
-                    <span>Ver no {result.platformName}</span>
+                    <ExternalLink className="size-3.5 text-slate-500" />
+                    <span>{t.viewOriginal} {result.platformName}</span>
                   </a>
                 </div>
-              </div>
-
-              {/* Garantia do Servidor */}
-              <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3.5 text-xs text-muted-foreground">
-                <ShieldCheck className="size-5 shrink-0 text-[#25F4EE] mt-0.5" />
-                <p className="leading-relaxed">
-                  <strong className="text-foreground">Download Universal e Seguro:</strong> Arquivo transferido direto pelo servidor sem marca d&apos;água, sem anúncios externos e sem bloqueios de navegador.
-                </p>
               </div>
             </div>
           </div>

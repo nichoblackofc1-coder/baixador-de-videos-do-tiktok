@@ -1,77 +1,117 @@
+"use client"
+
 import { TikSaveDownloader } from "@/components/tiksave-downloader"
+import { LanguageSwitcher } from "@/components/language-switcher"
+import { useLanguage } from "@/context/language-context"
+import { Zap, ShieldCheck, Download, Sparkles } from "lucide-react"
 
 export default function Page() {
+  const { t } = useLanguage()
+
+  const featureList = [
+    {
+      icon: Zap,
+      title: t.features.title1,
+      desc: t.features.desc1,
+    },
+    {
+      icon: ShieldCheck,
+      title: t.features.title2,
+      desc: t.features.desc2,
+    },
+    {
+      icon: Download,
+      title: t.features.title3,
+      desc: t.features.desc3,
+    },
+  ]
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-background">
-      {/* Background ambient glows */}
+    <main className="relative min-h-screen overflow-hidden bg-[#F8FAFC]">
+      {/* Background ambient lighting - Canvas Design */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0"
         style={{
-          background:
-            "radial-gradient(60% 55% at 8% -5%, rgba(254, 44, 85, 0.45), transparent 60%), radial-gradient(55% 55% at 100% 105%, rgba(37, 244, 238, 0.35), transparent 60%), radial-gradient(45% 40% at 95% 0%, rgba(254, 44, 85, 0.2), transparent 70%)",
+          backgroundImage:
+            "radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.08) 0%, transparent 55%), radial-gradient(circle at 85% 15%, rgba(99, 102, 241, 0.05) 0%, transparent 45%), radial-gradient(circle at 15% 25%, rgba(14, 165, 233, 0.05) 0%, transparent 45%)",
         }}
       />
 
-      <div className="relative z-10 mx-auto w-full max-w-5xl px-4 pb-24 pt-10 sm:pt-12">
-        <header className="mb-14 flex items-center justify-between sm:mb-16">
-          <div className="text-2xl font-black tracking-tight">
-            TikSave{" "}
-            <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-              Universal
-            </span>
+      <div className="relative z-10 mx-auto w-full max-w-5xl px-4 pb-24 pt-8 sm:pt-12">
+        {/* Header com Logo, Status e Seletor de Idioma */}
+        <header className="mb-12 flex items-center justify-between sm:mb-16">
+          <div className="flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/icon.png"
+              alt="Logo Save Web"
+              className="size-9 sm:size-10 rounded-xl shadow-md ring-1 ring-black/5"
+            />
+            <div className="text-xl sm:text-2xl font-black tracking-tight text-slate-900">
+              Save{" "}
+              <span className="text-blue-600">
+                Web
+              </span>
+            </div>
           </div>
-          <span className="hidden rounded-full border border-border bg-card/60 px-4 py-2 text-xs font-semibold text-muted-foreground backdrop-blur sm:inline">
-            ⚡ Baixador Tudo-em-Um
-          </span>
+
+          <div className="flex items-center gap-2.5">
+            <span className="hidden md:inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs">
+              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+              {t.headerBadge}
+            </span>
+            <LanguageSwitcher />
+          </div>
         </header>
 
+        {/* Hero Section */}
         <section className="text-center">
-          <h1 className="text-balance text-4xl font-black leading-[0.98] tracking-tight sm:text-6xl lg:text-7xl">
-            Baixe vídeos de{" "}
-            <span className="bg-gradient-to-r from-[#FE2C55] to-[#25F4EE] bg-clip-text text-transparent">
-              Qualquer Rede Social
+          <div className="inline-flex items-center gap-2 rounded-full border border-blue-200/80 bg-blue-50/70 px-3.5 py-1 text-xs font-semibold text-blue-700 mb-6 shadow-2xs">
+            <Sparkles className="size-3.5" />
+            <span>{t.heroTag}</span>
+          </div>
+
+          <h1 className="text-balance text-4xl font-extrabold leading-[1.08] tracking-tight text-slate-900 sm:text-6xl lg:text-7xl">
+            {t.heroTitlePrefix}
+            <span className="bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 bg-clip-text text-transparent">
+              {t.heroTitleGradient}
             </span>
           </h1>
-          <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg">
-            Cole o link do <strong>TikTok, Instagram, YouTube, Pinterest ou Kwai</strong>.
-            Identificamos a rede automaticamente e você baixa o vídeo ou foto direto pelo nosso servidor — sem marca d&apos;água e sem anúncios.
+
+          <p className="mx-auto mt-5 max-w-2xl text-pretty text-base leading-relaxed text-slate-600 sm:text-lg">
+            {t.heroSubtitle}
           </p>
 
-          <div className="mt-8">
+          <div className="mt-8 sm:mt-10">
             <TikSaveDownloader />
           </div>
         </section>
 
-        <section className="mt-20 grid gap-4 sm:mt-24 sm:grid-cols-3">
-          {[
-            {
-              title: "Detecção Automática",
-              desc: "Basta colar o link. O sistema reconhece se é do TikTok, Instagram, YouTube, Pinterest ou Kwai na hora.",
-            },
-            {
-              title: "Sem Marca d'Água",
-              desc: "Arquivos de vídeo limpos em HD 1080p e fotos na resolução máxima original.",
-            },
-            {
-              title: "Download Direto e Rápido",
-              desc: "Transferência direta pelo servidor no seu dispositivo sem redirecionamentos ou cadastros.",
-            },
-          ].map((item) => (
-            <div
-              key={item.title}
-              className="rounded-3xl border border-border/80 bg-card/50 p-6 text-left backdrop-blur-xl hover:border-white/20 transition"
-            >
-              <h3 className="text-lg font-bold text-foreground">{item.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                {item.desc}
-              </p>
-            </div>
-          ))}
+        {/* Destaques / Benefícios em Estilo Cartões Canvas */}
+        <section className="mt-20 grid gap-5 sm:mt-24 sm:grid-cols-3">
+          {featureList.map((item) => {
+            const Icon = item.icon
+            return (
+              <div
+                key={item.title}
+                className="group rounded-2xl border border-slate-200/80 bg-white p-6 text-left shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] hover:shadow-[0_10px_25px_-5px_rgba(0,0,0,0.08)] hover:border-slate-300 transition-all duration-200"
+              >
+                <div className="mb-4 inline-flex size-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600 group-hover:scale-105 transition-transform">
+                  <Icon className="size-5" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900">{item.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                  {item.desc}
+                </p>
+              </div>
+            )
+          })}
         </section>
 
-        <footer className="mt-16 text-center text-xs text-muted-foreground">
-          TikSave Universal — Use apenas para conteúdo com direito de download. Suporta TikTok, Instagram, YouTube, Pinterest, Kwai e mais.
+        {/* Rodapé Clean Internacional */}
+        <footer className="mt-20 border-t border-slate-200/60 pt-8 text-center text-xs text-slate-500">
+          {t.footerText}
         </footer>
       </div>
     </main>

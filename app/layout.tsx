@@ -16,12 +16,13 @@ const siteUrl =
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "TikSave Universal - Baixar Vídeos do TikTok, Instagram, YouTube e Pinterest",
-    template: "%s | TikSave Universal",
+    default: "Save Web - Baixar Vídeos do TikTok, Instagram, YouTube e Pinterest",
+    template: "%s | Save Web",
   },
   description:
     "Baixe vídeos do TikTok, Reels do Instagram, Shorts do YouTube, pins do Pinterest e Kwai em MP4 HD sem marca d'água. 100% gratuito e direto pelo navegador.",
   keywords: [
+    "save web",
     "baixar video tiktok",
     "baixar reels instagram",
     "baixar shorts youtube",
@@ -33,11 +34,10 @@ export const metadata: Metadata = {
     "youtube downloader",
     "pinterest video download",
     "salvar video tiktok",
-    "tiksave universal",
   ],
-  authors: [{ name: "TikSave Pro" }],
-  creator: "TikSave Pro",
-  publisher: "TikSave Pro",
+  authors: [{ name: "Save Web" }],
+  creator: "Save Web",
+  publisher: "Save Web",
   formatDetection: {
     email: false,
     address: false,
@@ -58,11 +58,11 @@ export const metadata: Metadata = {
     },
   },
   openGraph: {
-    title: "TikSave Pro - Baixar Vídeo do TikTok Sem Marca d'Água",
+    title: "Save Web - Baixar Vídeos e Fotos Sem Marca d'Água",
     description:
-      "Baixe vídeos do TikTok em MP4 HD e áudio MP3 sem marca d'água. 100% gratuito e direto pelo navegador.",
+      "Baixe vídeos do TikTok, Reels do Instagram, YouTube, Pinterest e Kwai em MP4 HD e áudio MP3 sem marca d'água. 100% gratuito.",
     url: siteUrl,
-    siteName: "TikSave Pro",
+    siteName: "Save Web",
     locale: "pt_BR",
     type: "website",
     images: [
@@ -70,15 +70,15 @@ export const metadata: Metadata = {
         url: "/home.png",
         width: 1200,
         height: 630,
-        alt: "TikSave Pro - Baixador de Vídeos do TikTok",
+        alt: "Save Web - Baixador Universal de Mídias",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "TikSave Pro - Baixar Vídeo do TikTok Sem Marca d'Água",
+    title: "Save Web - Baixar Vídeos e Fotos Sem Marca d'Água",
     description:
-      "Baixe vídeos do TikTok em MP4 HD sem marca d'água direto pelo navegador.",
+      "Baixe vídeos do TikTok, Reels do Instagram, YouTube, Pinterest e Kwai sem marca d'água direto pelo navegador.",
     images: ["/home.png"],
   },
   icons: {
@@ -108,14 +108,14 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: "dark",
-  themeColor: "#0a0a0c",
+  colorScheme: "light",
+  themeColor: "#F8FAFC",
 }
 
 const jsonLd = {
   "@context": "https://schema.org",
   "@type": "WebApplication",
-  name: "TikSave Pro",
+  name: "Save Web",
   url: siteUrl,
   applicationCategory: "MultimediaApplication",
   operatingSystem: "All",
@@ -126,8 +126,10 @@ const jsonLd = {
     priceCurrency: "BRL",
   },
   description:
-    "Ferramenta online para baixar vídeos do TikTok em MP4 HD e áudios em MP3 sem marca d'água gratuitamente.",
+    "Ferramenta online para baixar vídeos do TikTok, Instagram, YouTube, Pinterest e Kwai em MP4 HD e áudios em MP3 sem marca d'água gratuitamente.",
 }
+
+import { LanguageProvider } from "@/context/language-context"
 
 export default function RootLayout({
   children,
@@ -136,8 +138,9 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="pt-BR"
+      lang="en"
       className={`${geistSans.variable} ${geistMono.variable} bg-background`}
+      suppressHydrationWarning
     >
       <head>
         <script
@@ -146,7 +149,9 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans antialiased">
-        {children}
+        <LanguageProvider>
+          {children}
+        </LanguageProvider>
         {process.env.NODE_ENV === "production" && <Analytics />}
       </body>
     </html>
