@@ -24,45 +24,109 @@ export interface UniversalMediaResult {
 }
 
 /* =========================================================================
-   1. YOUTUBE INNERTUBE ENGINE (Direct player streams without third-party ads)
+   1. YOUTUBE EXTRACTOR (Invidious Multi-Node + Innertube Failover)
    ========================================================================= */
-async function extractYouTubeInnertube(rawUrl: string): Promise<UniversalMediaResult | null> {
+const INVIDIOUS_INSTANCES = [
+  "https://invidious.f5.si",
+  "https://inv.nadeko.net",
+  "https://invidious.nerdvpn.de",
+  "https://yt.chocolatemoo53.com",
+  "https://invidious.tiekoetter.com",
+]
+
+async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | null> {
   const match = rawUrl.match(
     /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
   )
   if (!match) return null
   const videoId = match[1]
 
+  // Estratégia 1: Invidious Instances (Suporta qualquer vídeo público, inclusive restritos e músicas)
+  for (const base of INVIDIOUS_INSTANCES) {
+    try {
+      const res = await fetch(`${base}/api/v1/videos/${videoId}`, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        },
+        signal: AbortSignal.timeout(6000),
+        cache: "no-store",
+      })
+      if (!res.ok) continue
+      const data = await res.json()
+      if (!data || !data.title) continue
+
+      // Tenta formato progressivo primeiro (vídeo + áudio embutido)
+      const progressive = (data.formatStreams || []).find(
+        (f: any) => f.url && f.type?.includes("video/mp4"),
+      )
+
+      // Se não houver progressivo, pega o melhor formato MP4 adaptativo
+      const adaptiveMp4s = (data.adaptiveFormats || []).filter(
+        (f: any) => f.url && f.type?.includes("video/mp4"),
+      )
+      adaptiveMp4s.sort((a: any, b: any) => {
+        const ha = parseInt(a.qualityLabel || a.resolution || "0") || a.height || 0
+        const hb = parseInt(b.qualityLabel || b.resolution || "0") || b.height || 0
+        return hb - ha
+      })
+      const bestAdaptive = adaptiveMp4s[0]
+
+      // Áudio para download opcional em MP3/AAC
+      const audio = (data.adaptiveFormats || []).find(
+        (f: any) => f.url && f.type?.startsWith("audio/"),
+      )
+
+      const vidUrl = progressive?.url || bestAdaptive?.url || ""
+      const audioUrl = audio?.url || ""
+
+      if (vidUrl || audioUrl) {
+        const thumbs = data.videoThumbnails || []
+        const bestThumb =
+          thumbs.sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0]?.url ||
+          `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+
+        const quality =
+          progressive?.qualityLabel ||
+          bestAdaptive?.qualityLabel ||
+          bestAdaptive?.resolution ||
+          "HD 720p"
+
+        return {
+          platform: "youtube",
+          platformName: "YouTube",
+          title: data.title,
+          author: data.author || "Canal do YouTube",
+          authorUniqueId: data.authorId ? `@${data.author}` : "",
+          authorAvatar: data.authorThumbnails?.[0]?.url || "",
+          cover: bestThumb,
+          mediaType: "video",
+          quality,
+          mp4: vidUrl,
+          downloadUrl: vidUrl || audioUrl,
+          music: audioUrl,
+          musicTitle: `${data.title} (Áudio)`,
+          duration: Number(data.lengthSeconds) || null,
+          original: rawUrl,
+        }
+      }
+    } catch {
+      // Tenta próxima instância do Invidious
+    }
+  }
+
+  // Estratégia 2: Innertube Direct Player
   const clients = [
     {
       name: "ANDROID_VR",
-      context: {
-        client: {
-          clientName: "ANDROID_VR",
-          clientVersion: "1.62.27",
-          hl: "en",
-          gl: "US",
-        },
-      },
-      userAgent:
-        "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12; Quest 3) gzip",
+      context: { client: { clientName: "ANDROID_VR", clientVersion: "1.62.27", hl: "en", gl: "US" } },
+      userAgent: "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12; Quest 3) gzip",
     },
     {
       name: "IOS",
-      context: {
-        client: {
-          clientName: "IOS",
-          clientVersion: "20.10.4",
-          deviceMake: "Apple",
-          deviceModel: "iPhone16,2",
-          osName: "iPhone",
-          osVersion: "18.3.2.22D82",
-          hl: "en",
-          gl: "US",
-        },
-      },
-      userAgent:
-        "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)",
+      context: { client: { clientName: "IOS", clientVersion: "20.10.4", deviceMake: "Apple", deviceModel: "iPhone16,2", osName: "iPhone", osVersion: "18.3.2.22D82", hl: "en", gl: "US" } },
+      userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)",
     },
   ]
 
@@ -126,61 +190,253 @@ async function extractYouTubeInnertube(rawUrl: string): Promise<UniversalMediaRe
         }
       }
     } catch {
-      // Tenta o próximo cliente
+      // Próximo cliente
     }
   }
+
+  // Estratégia 3: btch.youtube fallback
+  try {
+    const data = await btch.youtube(rawUrl)
+    if (data && (data.mp4 || data.mp3)) {
+      return {
+        platform: "youtube",
+        platformName: "YouTube",
+        title: data.title || "Vídeo do YouTube",
+        author: data.author || "Canal do YouTube",
+        authorUniqueId: data.author || "",
+        cover: data.thumbnail || "",
+        mediaType: "video",
+        quality: "HD 720p",
+        mp4: data.mp4 || "",
+        downloadUrl: data.mp4 || data.mp3,
+        music: data.mp3 || "",
+        musicTitle: data.title ? `${data.title} (Áudio)` : "Áudio do YouTube",
+        duration: null,
+        original: rawUrl,
+      }
+    }
+  } catch {}
+
   return null
 }
 
 /* =========================================================================
-   2. TWITTER / X ENGINE (fxtwitter API: direct video/photo without tokens)
+   2. INSTAGRAM EXTRACTOR (Snapsave Core + Direct Scraper Fallback)
    ========================================================================= */
-async function extractTwitterFx(rawUrl: string): Promise<UniversalMediaResult | null> {
+async function extractInstagram(rawUrl: string): Promise<UniversalMediaResult | null> {
+  // Estratégia 1: snapsave-media-downloader (Mais recente e estável)
+  try {
+    const { snapsave } = await import("snapsave-media-downloader")
+    const res = await snapsave(rawUrl)
+    if (res && res.success && res.data?.media && res.data.media.length > 0) {
+      const first = res.data.media[0]
+      const mediaUrl = first.url || ""
+      const isVideo = first.type === "video" || mediaUrl.includes(".mp4")
+      if (mediaUrl) {
+        return {
+          platform: "instagram",
+          platformName: "Instagram",
+          title: "Publicação do Instagram",
+          author: "Instagram Criador",
+          cover: first.thumbnail || mediaUrl,
+          mediaType: isVideo ? "video" : "image",
+          quality: isVideo ? "HD Original" : "Alta Resolução",
+          mp4: isVideo ? mediaUrl : "",
+          downloadUrl: mediaUrl,
+          duration: null,
+          original: rawUrl,
+        }
+      }
+    }
+  } catch {}
+
+  // Estratégia 2: btch.igdl
+  try {
+    const data = await btch.igdl(rawUrl)
+    if (data && data.status && Array.isArray(data.result) && data.result.length > 0) {
+      const valid = data.result.find((r: any) => r.url && r.url.length > 5) || data.result[0]
+      if (valid && valid.url) {
+        const isVideo = valid.url.includes(".mp4") || valid.url.includes("video")
+        return {
+          platform: "instagram",
+          platformName: "Instagram",
+          title: "Publicação do Instagram",
+          author: "Instagram Criador",
+          cover: valid.thumbnail || valid.url,
+          mediaType: isVideo ? "video" : "image",
+          quality: "Alta Resolução",
+          mp4: isVideo ? valid.url : "",
+          downloadUrl: valid.url,
+          duration: null,
+          original: rawUrl,
+        }
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+/* =========================================================================
+   3. FACEBOOK EXTRACTOR (Snapsave Core + btch.fbdown Fallback)
+   ========================================================================= */
+async function extractFacebook(rawUrl: string): Promise<UniversalMediaResult | null> {
+  // Estratégia 1: snapsave-media-downloader
+  try {
+    const { snapsave } = await import("snapsave-media-downloader")
+    const res = await snapsave(rawUrl)
+    if (res && res.success && res.data?.media && res.data.media.length > 0) {
+      // Pega a versão com maior resolução (HD preferencial)
+      const hdVid =
+        res.data.media.find((m: any) => m.resolution?.includes("HD") || m.resolution?.includes("720") || m.resolution?.includes("1080")) ||
+        res.data.media[0]
+
+      if (hdVid && hdVid.url) {
+        return {
+          platform: "facebook",
+          platformName: "Facebook",
+          title: res.data.description || "Vídeo do Facebook",
+          author: "Página do Facebook",
+          cover: res.data.preview || "",
+          mediaType: "video",
+          quality: hdVid.resolution || "HD",
+          mp4: hdVid.url,
+          downloadUrl: hdVid.url,
+          duration: null,
+          original: rawUrl,
+        }
+      }
+    }
+  } catch {}
+
+  // Estratégia 2: btch.fbdown
+  try {
+    const data = await btch.fbdown(rawUrl)
+    if (data && (data.HD || data.Normal_video)) {
+      const mp4 = data.HD || data.Normal_video || ""
+      return {
+        platform: "facebook",
+        platformName: "Facebook",
+        title: "Vídeo do Facebook",
+        author: "Página do Facebook",
+        cover: "",
+        mediaType: "video",
+        quality: data.HD ? "HD" : "Normal",
+        mp4,
+        downloadUrl: mp4,
+        duration: null,
+        original: rawUrl,
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+/* =========================================================================
+   4. TWITTER / X EXTRACTOR (fxtwitter + vxtwitter API)
+   ========================================================================= */
+async function extractTwitter(rawUrl: string): Promise<UniversalMediaResult | null> {
   const match = rawUrl.match(/(?:twitter\.com|x\.com)\/(?:[a-zA-Z0-9_]+)\/status\/([0-9]+)/)
   if (!match) return null
   const tweetId = match[1]
 
+  // Estratégia 1: fxtwitter
   try {
     const res = await fetch(`https://api.fxtwitter.com/status/${tweetId}`, {
       headers: { Accept: "application/json" },
       cache: "no-store",
     })
-    if (!res.ok) return null
-    const data = await res.json()
-    const tweet = data.tweet
-    if (!tweet) return null
+    if (res.ok) {
+      const data = await res.json()
+      const tweet = data.tweet
+      if (tweet) {
+        const video = tweet.media?.videos?.[0]
+        const photo = tweet.media?.photos?.[0]
+        const mp4 = video?.url || ""
+        const isVideo = Boolean(mp4)
+        const cover = video?.thumbnail_url || photo?.url || ""
+        const downloadUrl = mp4 || photo?.url || ""
 
-    const video = tweet.media?.videos?.[0]
-    const photo = tweet.media?.photos?.[0]
-    const mp4 = video?.url || ""
-    const isVideo = Boolean(mp4)
-    const cover = video?.thumbnail_url || photo?.url || ""
-    const downloadUrl = mp4 || photo?.url || ""
-
-    return {
-      platform: "twitter",
-      platformName: "Twitter / X",
-      title: tweet.text?.slice(0, 150) || "Publicação do X (Twitter)",
-      author: tweet.author?.name || tweet.author?.screen_name || "Usuário do X",
-      authorUniqueId: tweet.author?.screen_name ? `@${tweet.author.screen_name}` : "",
-      authorAvatar: tweet.author?.avatar_url || "",
-      cover,
-      mediaType: isVideo ? "video" : "image",
-      quality: isVideo ? "HD" : "Alta Resolução",
-      mp4,
-      downloadUrl,
-      duration: null,
-      original: rawUrl,
+        if (downloadUrl) {
+          return {
+            platform: "twitter",
+            platformName: "Twitter / X",
+            title: tweet.text?.slice(0, 150) || "Publicação do X (Twitter)",
+            author: tweet.author?.name || tweet.author?.screen_name || "Usuário do X",
+            authorUniqueId: tweet.author?.screen_name ? `@${tweet.author.screen_name}` : "",
+            authorAvatar: tweet.author?.avatar_url || "",
+            cover,
+            mediaType: isVideo ? "video" : "image",
+            quality: isVideo ? "HD" : "Alta Resolução",
+            mp4,
+            downloadUrl,
+            duration: null,
+            original: rawUrl,
+          }
+        }
+      }
     }
-  } catch {
-    return null
-  }
+  } catch {}
+
+  // Estratégia 2: vxtwitter
+  try {
+    const res = await fetch(`https://api.vxtwitter.com/status/${tweetId}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    })
+    if (res.ok) {
+      const tweet = await res.json()
+      if (tweet) {
+        const mp4 = tweet.video_url || tweet.mediaURLs?.[0] || ""
+        const isVideo = Boolean(tweet.video_url || mp4?.includes(".mp4"))
+        if (mp4) {
+          return {
+            platform: "twitter",
+            platformName: "Twitter / X",
+            title: tweet.text?.slice(0, 150) || "Publicação do X (Twitter)",
+            author: tweet.user_name || tweet.user_screen_name || "Usuário do X",
+            authorUniqueId: tweet.user_screen_name ? `@${tweet.user_screen_name}` : "",
+            cover: tweet.mediaURLs?.[0] || "",
+            mediaType: isVideo ? "video" : "image",
+            quality: isVideo ? "HD" : "Alta Resolução",
+            mp4: isVideo ? mp4 : "",
+            downloadUrl: mp4,
+            duration: null,
+            original: rawUrl,
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Estratégia 3: btch.twitter
+  try {
+    const data = await btch.twitter(rawUrl)
+    if (data && data.url) {
+      return {
+        platform: "twitter",
+        platformName: "Twitter / X",
+        title: data.title || "Vídeo do Twitter / X",
+        author: "Usuário do X",
+        cover: "",
+        mediaType: "video",
+        quality: "HD",
+        mp4: data.url,
+        downloadUrl: data.url,
+        duration: null,
+        original: rawUrl,
+      }
+    }
+  } catch {}
+
+  return null
 }
 
 /* =========================================================================
-   3. PINTEREST ENGINE (Direct Googlebot CDN original scraper)
+   5. PINTEREST EXTRACTOR (Direct Googlebot CDN original scraper + btch)
    ========================================================================= */
-async function extractPinterestDirect(rawUrl: string): Promise<UniversalMediaResult | null> {
+async function extractPinterest(rawUrl: string): Promise<UniversalMediaResult | null> {
   try {
     const res = await fetch(rawUrl, {
       headers: {
@@ -199,7 +455,6 @@ async function extractPinterestDirect(rawUrl: string): Promise<UniversalMediaRes
       "Pin do Pinterest"
     const title = rawTitle.replace(/\s*-\s*Pinterest.*$/i, "").trim() || "Pin do Pinterest"
 
-    // Busca imagens de resolução máxima original
     const originalImgs = html.match(
       /https:\/\/i\.pinimg\.com\/originals\/[a-zA-Z0-9/_.-]+\.(jpg|jpeg|png|webp)/gi,
     )
@@ -232,16 +487,43 @@ async function extractPinterestDirect(rawUrl: string): Promise<UniversalMediaRes
         original: rawUrl,
       }
     }
-  } catch {
-    // Fallback
-  }
+  } catch {}
+
+  try {
+    const data = await btch.pinterest(rawUrl)
+    if (data && data.result) {
+      const resObj = data.result as any
+      const directUrl =
+        typeof resObj === "string"
+          ? resObj
+          : resObj.url || resObj.downloadUrl || resObj.video || resObj.videos || resObj.image
+      const isVideo = directUrl?.includes(".mp4") || Boolean(resObj.video || resObj.videos)
+
+      if (directUrl) {
+        return {
+          platform: "pinterest",
+          platformName: "Pinterest",
+          title: resObj.title || "Mídia do Pinterest",
+          author: resObj.author || "Pinterest Pin",
+          cover: resObj.thumbnail || resObj.image || directUrl,
+          mediaType: isVideo ? "video" : "image",
+          quality: "Resolução Original",
+          mp4: isVideo ? directUrl : "",
+          downloadUrl: directUrl,
+          duration: null,
+          original: rawUrl,
+        }
+      }
+    }
+  } catch {}
+
   return null
 }
 
 /* =========================================================================
-   4. KWAI ENGINE (Mobile follow-redirect scraper)
+   6. KWAI EXTRACTOR (Mobile follow-redirect scraper + btch)
    ========================================================================= */
-async function extractKwaiDirect(rawUrl: string): Promise<UniversalMediaResult | null> {
+async function extractKwai(rawUrl: string): Promise<UniversalMediaResult | null> {
   try {
     const res = await fetch(rawUrl, {
       headers: {
@@ -283,9 +565,177 @@ async function extractKwaiDirect(rawUrl: string): Promise<UniversalMediaResult |
         original: rawUrl,
       }
     }
-  } catch {
-    // Fallback
-  }
+  } catch {}
+
+  try {
+    const data = await btch.kuaishou(rawUrl)
+    if (data && data.status && data.result) {
+      const resObj = data.result as any
+      const mp4 = resObj.url || resObj.mp4 || resObj.video
+      if (mp4) {
+        return {
+          platform: "kwai",
+          platformName: "Kwai",
+          title: resObj.title || "Vídeo do Kwai",
+          author: resObj.author || "Criador do Kwai",
+          cover: resObj.thumbnail || resObj.cover || "",
+          mediaType: "video",
+          quality: "HD Sem Marca",
+          mp4,
+          downloadUrl: mp4,
+          duration: null,
+          original: rawUrl,
+        }
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+/* =========================================================================
+   7. TIKTOK EXTRACTOR (TikWM HD API + btch fallback)
+   ========================================================================= */
+async function extractTikTok(rawUrl: string): Promise<UniversalMediaResult | null> {
+  try {
+    const api = "https://www.tikwm.com/api/?hd=1&url=" + encodeURIComponent(rawUrl)
+    const res = await fetch(api, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    })
+
+    if (res.ok) {
+      const json = await res.json()
+      if (json && json.code === 0 && json.data) {
+        const data = json.data
+        const mp4: string | undefined = data.hdplay || data.play || data.wmplay
+        if (mp4) {
+          return {
+            platform: "tiktok",
+            platformName: "TikTok",
+            title: data.title || "Vídeo do TikTok",
+            author: data.author?.nickname || data.author?.unique_id || "TikTok Criador",
+            authorUniqueId: data.author?.unique_id ? `@${data.author.unique_id}` : "",
+            authorAvatar: data.author?.avatar || "",
+            cover: data.cover || data.origin_cover || "",
+            mediaType: "video",
+            quality: data.hdplay ? "HD 1080p (Sem Marca)" : "Qualidade Normal",
+            mp4,
+            downloadUrl: mp4,
+            music: data.music || "",
+            musicTitle: data.music_info?.title || "Áudio Original",
+            duration: data.duration ?? null,
+            original: rawUrl,
+          }
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const data = await btch.ttdl(rawUrl)
+    if (data && (data.video || (data as any).nowm)) {
+      const mp4 = (data as any).nowm || data.video
+      return {
+        platform: "tiktok",
+        platformName: "TikTok",
+        title: data.title || "Vídeo do TikTok",
+        author: "TikTok Criador",
+        cover: data.thumbnail || "",
+        mediaType: "video",
+        quality: "HD Sem Marca",
+        mp4,
+        downloadUrl: mp4,
+        music: Array.isArray(data.audio) ? data.audio[0] : data.audio || "",
+        duration: null,
+        original: rawUrl,
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+/* =========================================================================
+   8. UNIVERSAL FALLBACK SCRAPER (OpenGraph / HTML5 video)
+   ========================================================================= */
+async function extractUniversalFallback(rawUrl: string): Promise<UniversalMediaResult | null> {
+  // Tenta snapsave como fallback universal (reconhece IG, FB, TT, etc.)
+  try {
+    const { snapsave } = await import("snapsave-media-downloader")
+    const res = await snapsave(rawUrl)
+    if (res && res.success && res.data?.media && res.data.media.length > 0) {
+      const first = res.data.media[0]
+      const mediaUrl = first.url || ""
+      const isVideo = first.type === "video" || mediaUrl.includes(".mp4")
+      if (mediaUrl) {
+        return {
+          platform: "other",
+          platformName: "Download Direto",
+          title: typeof res.data.description === "string" ? res.data.description : "Mídia Baixada",
+          author: "Criador",
+          cover: first.thumbnail || (typeof res.data.preview === "string" ? res.data.preview : "") || mediaUrl,
+          mediaType: isVideo ? "video" : "image",
+          quality: first.resolution || "HD Original",
+          mp4: isVideo ? mediaUrl : "",
+          downloadUrl: mediaUrl,
+          duration: null,
+          original: rawUrl,
+        }
+      }
+    }
+  } catch {}
+
+  // Scraper genérico de meta tags
+  try {
+    const res = await fetch(rawUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      redirect: "follow",
+      cache: "no-store",
+    })
+    const html = await res.text()
+
+    const ogVid =
+      html.match(/<meta property="og:video" content="([^"]+)"/)?.[1] ||
+      html.match(/<meta property="og:video:url" content="([^"]+)"/)?.[1] ||
+      html.match(/<meta property="og:video:secure_url" content="([^"]+)"/)?.[1]
+
+    const ogImg =
+      html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] ||
+      html.match(/<meta property="og:image:url" content="([^"]+)"/)?.[1]
+
+    const title =
+      html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] ||
+      html.match(/<title>([^<]+)<\/title>/)?.[1] ||
+      "Conteúdo Multimídia"
+
+    if (ogVid || ogImg) {
+      const isVideo = Boolean(ogVid)
+      const downloadUrl = ogVid || ogImg || ""
+      return {
+        platform: "other",
+        platformName: "Mídia Online",
+        title: title.replace(/\s+/g, " ").trim(),
+        author: "Autor Público",
+        cover: ogImg || ogVid || "",
+        mediaType: isVideo ? "video" : "image",
+        quality: "Original",
+        mp4: ogVid || "",
+        downloadUrl,
+        duration: null,
+        original: rawUrl,
+      }
+    }
+  } catch {}
+
   return null
 }
 
@@ -313,265 +763,44 @@ export async function POST(request: NextRequest) {
   const platformId = platformInfo ? platformInfo.id : "other"
 
   try {
-    // 1. TIKTOK ENGINE
-    if (platformId === "tiktok") {
-      try {
-        const api = "https://www.tikwm.com/api/?hd=1&url=" + encodeURIComponent(rawUrl)
-        const res = await fetch(api, {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            Accept: "application/json",
-          },
-          cache: "no-store",
-        })
+    let result: UniversalMediaResult | null = null
 
-        if (res.ok) {
-          const json = await res.json()
-          if (json && json.code === 0 && json.data) {
-            const data = json.data
-            const mp4: string | undefined = data.hdplay || data.play || data.wmplay
-            if (mp4) {
-              const result: UniversalMediaResult = {
-                platform: "tiktok",
-                platformName: "TikTok",
-                title: data.title || "Vídeo do TikTok",
-                author: data.author?.nickname || data.author?.unique_id || "TikTok Criador",
-                authorUniqueId: data.author?.unique_id ? `@${data.author.unique_id}` : "",
-                authorAvatar: data.author?.avatar || "",
-                cover: data.cover || data.origin_cover || "",
-                mediaType: "video",
-                quality: data.hdplay ? "HD 1080p (Sem Marca)" : "Qualidade Normal",
-                mp4,
-                downloadUrl: mp4,
-                music: data.music || "",
-                musicTitle: data.music_info?.title || "Áudio Original",
-                duration: data.duration ?? null,
-                original: rawUrl,
-              }
-              return NextResponse.json(result)
-            }
-          }
-        }
-      } catch {
-        // Fallback para btch.ttdl
-      }
-
-      try {
-        const data = await btch.ttdl(rawUrl)
-        if (data && (data.video || (data as any).nowm)) {
-          const mp4 = (data as any).nowm || data.video
-          return NextResponse.json({
-            platform: "tiktok",
-            platformName: "TikTok",
-            title: data.title || "Vídeo do TikTok",
-            author: "TikTok Criador",
-            cover: data.thumbnail || "",
-            mediaType: "video",
-            quality: "HD Sem Marca",
-            mp4,
-            downloadUrl: mp4,
-            music: data.audio || "",
-            duration: null,
-            original: rawUrl,
-          })
-        }
-      } catch {
-        // Segue adiante
-      }
+    switch (platformId) {
+      case "youtube":
+        result = await extractYouTube(rawUrl)
+        break
+      case "instagram":
+        result = await extractInstagram(rawUrl)
+        break
+      case "facebook":
+        result = await extractFacebook(rawUrl)
+        break
+      case "twitter":
+        result = await extractTwitter(rawUrl)
+        break
+      case "pinterest":
+        result = await extractPinterest(rawUrl)
+        break
+      case "kwai":
+        result = await extractKwai(rawUrl)
+        break
+      case "tiktok":
+        result = await extractTikTok(rawUrl)
+        break
+      default:
+        result = await extractUniversalFallback(rawUrl)
+        break
     }
 
-    // 2. YOUTUBE ENGINE
-    if (platformId === "youtube") {
-      const innertubeResult = await extractYouTubeInnertube(rawUrl)
-      if (innertubeResult) {
-        return NextResponse.json(innertubeResult)
-      }
-
-      try {
-        const data = await btch.youtube(rawUrl)
-        if (data && (data.mp4 || data.mp3)) {
-          const result: UniversalMediaResult = {
-            platform: "youtube",
-            platformName: "YouTube",
-            title: data.title || "Vídeo do YouTube",
-            author: data.author || "Canal do YouTube",
-            authorUniqueId: data.author || "",
-            cover: data.thumbnail || "",
-            mediaType: "video",
-            quality: "HD 720p",
-            mp4: data.mp4 || "",
-            downloadUrl: data.mp4 || data.mp3,
-            music: data.mp3 || "",
-            musicTitle: data.title ? `${data.title} (Áudio)` : "Áudio do YouTube",
-            duration: null,
-            original: rawUrl,
-          }
-          return NextResponse.json(result)
-        }
-      } catch {
-        // Segue adiante
-      }
+    // Se o extrator primário da rede específica falhou, tenta o fallback universal inteligente
+    if (!result && platformId !== "other") {
+      result = await extractUniversalFallback(rawUrl)
     }
 
-    // 3. TWITTER / X ENGINE
-    if (platformId === "twitter") {
-      const fxResult = await extractTwitterFx(rawUrl)
-      if (fxResult) {
-        return NextResponse.json(fxResult)
-      }
-
-      try {
-        const data = await btch.twitter(rawUrl)
-        if (data && data.url) {
-          return NextResponse.json({
-            platform: "twitter",
-            platformName: "Twitter / X",
-            title: data.title || "Vídeo do Twitter / X",
-            author: "Usuário do X",
-            cover: "",
-            mediaType: "video",
-            quality: "HD",
-            mp4: data.url,
-            downloadUrl: data.url,
-            duration: null,
-            original: rawUrl,
-          })
-        }
-      } catch {
-        // Segue adiante
-      }
+    if (result && (result.mp4 || result.downloadUrl || result.cover)) {
+      return NextResponse.json(result)
     }
 
-    // 4. PINTEREST ENGINE
-    if (platformId === "pinterest") {
-      const pinDirect = await extractPinterestDirect(rawUrl)
-      if (pinDirect) {
-        return NextResponse.json(pinDirect)
-      }
-
-      try {
-        const data = await btch.pinterest(rawUrl)
-        if (data && data.result) {
-          const resObj = data.result as any
-          const directUrl =
-            typeof resObj === "string"
-              ? resObj
-              : resObj.url || resObj.downloadUrl || resObj.video || resObj.videos || resObj.image
-          const isVideo = directUrl?.includes(".mp4") || Boolean(resObj.video || resObj.videos)
-
-          if (directUrl) {
-            return NextResponse.json({
-              platform: "pinterest",
-              platformName: "Pinterest",
-              title: resObj.title || "Mídia do Pinterest",
-              author: resObj.author || "Pinterest Pin",
-              cover: resObj.thumbnail || resObj.image || directUrl,
-              mediaType: isVideo ? "video" : "image",
-              quality: "Resolução Original",
-              mp4: isVideo ? directUrl : "",
-              downloadUrl: directUrl,
-              duration: null,
-              original: rawUrl,
-            })
-          }
-        }
-      } catch {
-        // Segue adiante
-      }
-    }
-
-    // 5. KWAI ENGINE
-    if (platformId === "kwai") {
-      const kwaiDirect = await extractKwaiDirect(rawUrl)
-      if (kwaiDirect) {
-        return NextResponse.json(kwaiDirect)
-      }
-
-      try {
-        const data = await btch.kuaishou(rawUrl)
-        if (data && data.status && data.result) {
-          const resObj = data.result as any
-          const mp4 = resObj.url || resObj.mp4 || resObj.video
-          if (mp4) {
-            return NextResponse.json({
-              platform: "kwai",
-              platformName: "Kwai",
-              title: resObj.title || "Vídeo do Kwai",
-              author: resObj.author || "Criador do Kwai",
-              cover: resObj.thumbnail || resObj.cover || "",
-              mediaType: "video",
-              quality: "HD Sem Marca",
-              mp4,
-              downloadUrl: mp4,
-              duration: null,
-              original: rawUrl,
-            })
-          }
-        }
-      } catch {
-        // Segue adiante
-      }
-    }
-
-    // 6. INSTAGRAM ENGINE
-    if (platformId === "instagram") {
-      try {
-        const data = await btch.igdl(rawUrl)
-        if (data && data.status && Array.isArray(data.result) && data.result.length > 0) {
-          const valid = data.result.find((r) => r.url && r.url.length > 5) || data.result[0]
-          if (valid.url) {
-            const isVideo =
-              valid.url.includes(".mp4") ||
-              valid.url.includes("video") ||
-              Boolean(valid.thumbnail)
-
-            return NextResponse.json({
-              platform: "instagram",
-              platformName: "Instagram",
-              title: "Publicação do Instagram",
-              author: "Instagram Criador",
-              cover: valid.thumbnail || valid.url || "",
-              mediaType: isVideo ? "video" : "image",
-              quality: "Alta Definição",
-              mp4: isVideo ? valid.url : "",
-              downloadUrl: valid.url,
-              duration: null,
-              original: rawUrl,
-            })
-          }
-        }
-      } catch {
-        // Segue adiante
-      }
-    }
-
-    // 7. FACEBOOK ENGINE
-    if (platformId === "facebook") {
-      try {
-        const data = await btch.fbdown(rawUrl)
-        if (data && (data.HD || data.Normal_video)) {
-          const mp4 = data.HD || data.Normal_video || ""
-          return NextResponse.json({
-            platform: "facebook",
-            platformName: "Facebook",
-            title: "Vídeo do Facebook",
-            author: "Página do Facebook",
-            cover: "",
-            mediaType: "video",
-            quality: data.HD ? "HD" : "Normal",
-            mp4,
-            downloadUrl: mp4,
-            duration: null,
-            original: rawUrl,
-          })
-        }
-      } catch {
-        // Segue adiante
-      }
-    }
-
-    // Se nenhuma engine retornou sucesso
     return NextResponse.json(
       {
         error:
