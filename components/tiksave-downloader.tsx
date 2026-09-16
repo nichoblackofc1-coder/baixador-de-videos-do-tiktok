@@ -101,24 +101,120 @@ export function TikSaveDownloader() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<UniversalResult | null>(null)
-  const [downloadStarted, setDownloadStarted] = useState<
-    "video" | "audio" | "image" | null
-  >(null)
+  const [downloadProgress, setDownloadProgress] = useState<{
+    type: "video" | "audio" | "image" | null
+    percent: number
+    label: string
+  }>({ type: null, percent: 0, label: "" })
   const [copied, setCopied] = useState(false)
+  const [videoPlaybackError, setVideoPlaybackError] = useState(false)
 
   const detectedPlatform = detectPlatform(url)
 
-  function handleTriggerDownload(type: "video" | "audio" | "image") {
-    setDownloadStarted(type)
-    setTimeout(() => {
-      setDownloadStarted(null)
-    }, 3500)
+  async function handleDownloadMedia(
+    mediaUrl: string,
+    type: "video" | "audio" | "image",
+    rawTitle: string,
+  ) {
+    if (downloadProgress.type) return
+
+    const ext = type === "audio" ? "mp3" : type === "image" ? "jpg" : "mp4"
+    const fileName = safeFileName(rawTitle, ext)
+
+    setDownloadProgress({
+      type,
+      percent: 10,
+      label: "Iniciando...",
+    })
+
+    try {
+      const downloadApiUrl = buildDownloadHref(mediaUrl, type, rawTitle)
+
+      // Fetch com credenciais para evitar bloqueios de SSO da Vercel e antivírus
+      const res = await fetch(downloadApiUrl, { credentials: "include" })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+      const contentLength = res.headers.get("content-length")
+      const total = contentLength ? parseInt(contentLength, 10) : 0
+
+      if (res.body && total > 0) {
+        const reader = res.body.getReader()
+        let received = 0
+        const chunks: Uint8Array[] = []
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          chunks.push(value)
+          received += value.length
+          const pct = Math.min(99, Math.round((received / total) * 100))
+          setDownloadProgress({
+            type,
+            percent: pct,
+            label: `${pct}% (${(received / 1024 / 1024).toFixed(1)}MB)`,
+          })
+        }
+
+        const mime =
+          type === "audio"
+            ? "audio/mpeg"
+            : type === "image"
+              ? "image/jpeg"
+              : "video/mp4"
+        const blob = new Blob(chunks, { type: mime })
+        const blobUrl = window.URL.createObjectURL(blob)
+
+        const a = document.createElement("a")
+        a.href = blobUrl
+        a.download = fileName
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 30000)
+
+        setDownloadProgress({
+          type,
+          percent: 100,
+          label: t.downloadStarted || "Download concluído!",
+        })
+        setTimeout(() => {
+          setDownloadProgress({ type: null, percent: 0, label: "" })
+        }, 3000)
+        return
+      }
+
+      // Fallback sem stream: converte para blob direto
+      const blob = await res.blob()
+      const blobUrl = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = blobUrl
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 30000)
+
+      setDownloadProgress({
+        type,
+        percent: 100,
+        label: t.downloadStarted || "Download concluído!",
+      })
+      setTimeout(() => {
+        setDownloadProgress({ type: null, percent: 0, label: "" })
+      }, 3000)
+    } catch (err) {
+      console.warn("[Download] Proxy via stream indisponível, abrindo direto da CDN:", err)
+      // Fallback 100% infalível: Abre direto da CDN da rede
+      window.open(mediaUrl, "_blank")
+      setDownloadProgress({ type: null, percent: 0, label: "" })
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setResult(null)
+    setVideoPlaybackError(false)
 
     const trimmed = url.trim()
     if (!trimmed) {
@@ -351,14 +447,44 @@ export function TikSaveDownloader() {
                     </div>
                   )}
 
-                  <video
-                    src={result.mp4}
-                    poster={result.cover}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    className="h-full w-full object-contain bg-black"
-                  />
+                  {videoPlaybackError ? (
+                    <div className="relative h-full w-full flex flex-col items-center justify-center bg-slate-900 text-white p-4 text-center">
+                      {result.cover && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={result.cover}
+                          alt={result.title}
+                          className="absolute inset-0 h-full w-full object-cover opacity-35 blur-[2px]"
+                        />
+                      )}
+                      <div className="relative z-10 flex flex-col items-center gap-2.5">
+                        <div className="flex size-12 items-center justify-center rounded-full bg-blue-600/90 text-white shadow-lg backdrop-blur-md">
+                          <Film className="size-6" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-200">
+                          {t.readyStatus || "Vídeo pronto para download"}
+                        </span>
+                        <a
+                          href={result.mp4}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-bold text-white shadow hover:bg-blue-700 transition-colors"
+                        >
+                          <ExternalLink className="size-3" /> Assistir direto
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    <video
+                      src={result.mp4}
+                      poster={result.cover}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      onError={() => setVideoPlaybackError(true)}
+                      className="h-full w-full object-contain bg-black"
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="relative max-w-[320px] w-full overflow-hidden rounded-2xl bg-slate-100 shadow-md border border-slate-200">
@@ -452,19 +578,25 @@ export function TikSaveDownloader() {
 
               {/* Botões de Download */}
               <div className="space-y-3 pt-1">
-                {/* Botão Principal: Download Direto Automático */}
+                {/* Botão Principal: Download de Vídeo com Progresso e Salvamento Local */}
                 {result.mediaType === "video" && result.mp4 ? (
-                  <a
-                    href={buildDownloadHref(result.mp4, "video", result.title)}
-                    download={safeFileName(result.title, "mp4")}
-                    onClick={() => handleTriggerDownload("video")}
-                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 font-bold text-white shadow-md shadow-blue-500/25 transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadMedia(result.mp4, "video", result.title)}
+                    disabled={downloadProgress.type === "video"}
+                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 font-bold text-white shadow-md shadow-blue-500/25 transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer disabled:opacity-90"
                   >
-                    {downloadStarted === "video" ? (
+                    {downloadProgress.type === "video" ? (
                       <>
-                        <Check className="size-5 text-white" />
+                        {downloadProgress.percent === 100 ? (
+                          <Check className="size-5 text-white" />
+                        ) : (
+                          <Loader2 className="size-5 animate-spin text-white" />
+                        )}
                         <span className="text-base sm:text-lg tracking-wide">
-                          {t.downloadStarted}
+                          {downloadProgress.percent === 100
+                            ? (t.downloadStarted || "Download concluído!")
+                            : `Baixando... ${downloadProgress.label}`}
                         </span>
                       </>
                     ) : (
@@ -475,19 +607,25 @@ export function TikSaveDownloader() {
                         </span>
                       </>
                     )}
-                  </a>
+                  </button>
                 ) : (
-                  <a
-                    href={buildDownloadHref(mainDownloadUrl, "image", result.title)}
-                    download={safeFileName(result.title, "jpg")}
-                    onClick={() => handleTriggerDownload("image")}
-                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 font-bold text-white shadow-md shadow-blue-500/25 transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer"
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadMedia(mainDownloadUrl, "image", result.title)}
+                    disabled={downloadProgress.type === "image"}
+                    className="group relative flex w-full min-h-14 items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 font-bold text-white shadow-md shadow-blue-500/25 transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] cursor-pointer disabled:opacity-90"
                   >
-                    {downloadStarted === "image" ? (
+                    {downloadProgress.type === "image" ? (
                       <>
-                        <Check className="size-5 text-white" />
+                        {downloadProgress.percent === 100 ? (
+                          <Check className="size-5 text-white" />
+                        ) : (
+                          <Loader2 className="size-5 animate-spin text-white" />
+                        )}
                         <span className="text-base sm:text-lg tracking-wide">
-                          {t.downloadImageStarted}
+                          {downloadProgress.percent === 100
+                            ? (t.downloadImageStarted || "Salvo!")
+                            : `Baixando... ${downloadProgress.label}`}
                         </span>
                       </>
                     ) : (
@@ -498,21 +636,29 @@ export function TikSaveDownloader() {
                         </span>
                       </>
                     )}
-                  </a>
+                  </button>
                 )}
 
                 {/* Botão Secundário: Baixar Áudio MP3 */}
                 {result.music ? (
-                  <a
-                    href={buildDownloadHref(result.music, "audio", result.title)}
-                    download={safeFileName(result.title, "mp3")}
-                    onClick={() => handleTriggerDownload("audio")}
-                    className="flex w-full min-h-12 items-center justify-center gap-2.5 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 px-6 py-3 font-semibold text-slate-800 shadow-2xs transition-all active:scale-[0.99] text-sm sm:text-base cursor-pointer"
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadMedia(result.music!, "audio", result.title)}
+                    disabled={downloadProgress.type === "audio"}
+                    className="flex w-full min-h-12 items-center justify-center gap-2.5 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 px-6 py-3 font-semibold text-slate-800 shadow-2xs transition-all active:scale-[0.99] text-sm sm:text-base cursor-pointer disabled:opacity-90"
                   >
-                    {downloadStarted === "audio" ? (
+                    {downloadProgress.type === "audio" ? (
                       <>
-                        <Check className="size-4 text-emerald-600" />
-                        <span className="text-emerald-700 font-bold">{t.downloadAudioStarted}</span>
+                        {downloadProgress.percent === 100 ? (
+                          <Check className="size-4 text-emerald-600" />
+                        ) : (
+                          <Loader2 className="size-4 animate-spin text-blue-600" />
+                        )}
+                        <span className="text-blue-600 font-bold">
+                          {downloadProgress.percent === 100
+                            ? (t.downloadAudioStarted || "Áudio salvo!")
+                            : `Baixando áudio... ${downloadProgress.label}`}
+                        </span>
                       </>
                     ) : (
                       <>
@@ -520,18 +666,19 @@ export function TikSaveDownloader() {
                         <span>{t.downloadAudio}</span>
                       </>
                     )}
-                  </a>
+                  </button>
                 ) : null}
 
-                {/* Opção de Link Direto (Fallback CDN) */}
+                {/* Opção de Link Direto (Fallback 100% da Plataforma) */}
                 {result.mediaType === "video" && result.mp4 && (
                   <div className="pt-0.5 text-center">
                     <a
-                      href={buildDownloadHref(result.mp4, "video", result.title, true)}
+                      href={result.mp4}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+                      className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors font-medium"
                     >
+                      <ExternalLink className="size-3.5 text-blue-500" />
                       <span>⚡ Link direto alternativo (CDN)</span>
                     </a>
                   </div>
