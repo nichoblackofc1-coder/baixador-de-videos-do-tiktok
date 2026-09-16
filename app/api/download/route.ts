@@ -61,6 +61,64 @@ export async function GET(request: NextRequest) {
       upstreamHeaders["Range"] = clientRange
     }
 
+    // Sanitização de nomes de arquivo e extensões
+    let ext = "mp4"
+    if (type === "audio") {
+      ext = "mp3"
+    } else if (type === "image") {
+      ext = "jpg"
+    }
+
+    const safeName =
+      rawName
+        .replace(/["'“”«»‘’`´\\]/g, "")
+        .replace(/[^\p{L}\p{N}\s_.-]/gu, "")
+        .trim()
+        .slice(0, 60)
+        .replace(/\s+/g, "_") || "download"
+
+    const asciiName =
+      safeName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9._-]/g, "_") || "media_file"
+
+    const encodedName = encodeURIComponent(`${safeName}.${ext}`)
+
+    // Se for URL do YouTube (googlevideo.com), usa o HttpClient especializado com consent cookies e browser headers
+    if (fileUrl.includes("googlevideo.com")) {
+      try {
+        const { HttpClient } = await import("@/lib/ytdown/net/http.js")
+        const http = new HttpClient()
+        const reqHeaders: Record<string, string> = { accept: "*/*" }
+        if (clientRange) {
+          reqHeaders["range"] = clientRange
+        }
+        const ytUpstream = await http.request(fileUrl, { headers: reqHeaders })
+        const statusCode = ytUpstream.status === 206 ? 206 : 200
+        const headers = new Headers()
+        headers.set("Content-Type", (ytUpstream.headers["content-type"] as string) || "video/mp4")
+        headers.set(
+          "Content-Disposition",
+          `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${encodedName}`,
+        )
+        headers.set("Accept-Ranges", "bytes")
+        headers.set("Content-Transfer-Encoding", "binary")
+        headers.set("Cache-Control", "public, max-age=3600")
+        if (ytUpstream.headers["content-length"]) {
+          headers.set("Content-Length", String(ytUpstream.headers["content-length"]))
+        }
+        if (ytUpstream.headers["content-range"]) {
+          headers.set("Content-Range", String(ytUpstream.headers["content-range"]))
+        }
+        const { Readable } = await import("node:stream")
+        const webStream = Readable.toWeb(ytUpstream.stream)
+        return new NextResponse(webStream as any, { status: statusCode, headers })
+      } catch (ytErr) {
+        console.warn("[Download API] ytdown stream falhou, tentando fallback fetch:", ytErr)
+      }
+    }
+
     const upstream = await fetch(fileUrl, {
       headers: upstreamHeaders,
       cache: "no-store",
@@ -84,29 +142,7 @@ export async function GET(request: NextRequest) {
           ? "image/jpeg"
           : "video/mp4")
 
-    let ext = "mp4"
-    if (type === "audio" || contentType.includes("audio")) {
-      ext = "mp3"
-    } else if (type === "image" || contentType.includes("image")) {
-      ext = contentType.includes("png") ? "png" : "jpg"
-    }
 
-    // Sanitização completa de nome de arquivo contra aspas curvas e caracteres problemáticos
-    const safeName =
-      rawName
-        .replace(/["'“”«»‘’`´\\]/g, "")
-        .replace(/[^\p{L}\p{N}\s_.-]/gu, "")
-        .trim()
-        .slice(0, 60)
-        .replace(/\s+/g, "_") || "download"
-
-    const asciiName =
-      safeName
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-zA-Z0-9._-]/g, "_") || "media_file"
-
-    const encodedName = encodeURIComponent(`${safeName}.${ext}`)
 
     const headers = new Headers()
     headers.set("Content-Type", contentType)

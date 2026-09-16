@@ -42,7 +42,52 @@ async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | nu
   if (!match) return null
   const videoId = match[1]
 
-  // Estratégia 1: Invidious Instances (Suporta qualquer vídeo público, inclusive restritos e músicas)
+  // Estratégia 1: Engine nativa especializada YTdownload (Gera URLs n-transformadas com áudio e vídeo muxed em MP4)
+  try {
+    const YTdownload = (await import("@/lib/ytdown/index.js")).default
+    const desc = await YTdownload.describe(videoId)
+    if (desc && desc.title) {
+      const muxed = desc.recommended.muxed || desc.formats.find((f: any) => f.muxed && f.url)
+      const audio = desc.recommended.audio || desc.formats.find((f: any) => f.kind === "audio" && f.url)
+      const bestVideo = desc.recommended.video || desc.formats.find((f: any) => f.kind === "video" && f.url)
+
+      const vidUrl = muxed?.url || bestVideo?.url || ""
+      const audioUrl = audio?.url || muxed?.url || ""
+
+      if (vidUrl || audioUrl) {
+        const bestThumb =
+          desc.thumbnails?.[desc.thumbnails.length - 1]?.url ||
+          `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+
+        const quality = muxed?.qualityLabel
+          ? `${muxed.qualityLabel} HD`
+          : bestVideo?.qualityLabel
+            ? `${bestVideo.qualityLabel} HD`
+            : "HD 720p"
+
+        return {
+          platform: "youtube",
+          platformName: "YouTube",
+          title: desc.title,
+          author: desc.author || "Canal do YouTube",
+          authorUniqueId: desc.channelId ? `@${desc.author}` : "",
+          cover: bestThumb,
+          mediaType: "video",
+          quality,
+          mp4: vidUrl,
+          downloadUrl: vidUrl || audioUrl,
+          music: audioUrl,
+          musicTitle: `${desc.title} (Áudio)`,
+          duration: desc.durationSeconds || null,
+          original: rawUrl,
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[YouTube] ytdown extractor falhou, tentando fallback Invidious:", err)
+  }
+
+  // Estratégia 2: Invidious Instances (Suporta qualquer vídeo público, inclusive restritos e músicas)
   for (const base of INVIDIOUS_INSTANCES) {
     try {
       const res = await fetch(`${base}/api/v1/videos/${videoId}`, {
