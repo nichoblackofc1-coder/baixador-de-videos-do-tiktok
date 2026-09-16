@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 
 function isAllowedUrl(value: string) {
   try {
@@ -37,22 +38,39 @@ export async function GET(request: NextRequest) {
   const type: "video" | "audio" | "image" =
     typeParam === "audio" ? "audio" : typeParam === "image" ? "image" : "video"
   const rawName = request.nextUrl.searchParams.get("name") || "download"
+  const directParam = request.nextUrl.searchParams.get("direct")
 
   if (!fileUrl || !isAllowedUrl(fileUrl)) {
     return NextResponse.json({ error: "URL de arquivo inválida." }, { status: 400 })
   }
 
+  // Se solicitado download direto por redirecionamento 302
+  if (directParam === "1" || directParam === "true") {
+    return NextResponse.redirect(fileUrl, { status: 302 })
+  }
+
   try {
+    const clientRange = request.headers.get("range")
+    const upstreamHeaders: Record<string, string> = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "*/*",
+    }
+
+    if (clientRange) {
+      upstreamHeaders["Range"] = clientRange
+    }
+
     const upstream = await fetch(fileUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Accept: "*/*",
-      },
+      headers: upstreamHeaders,
       cache: "no-store",
     })
 
     if (!upstream.ok || !upstream.body) {
+      // Se range falhou com 416, tenta novamente sem range
+      if (upstream.status === 416 && clientRange) {
+        return NextResponse.redirect(request.nextUrl.pathname + "?" + request.nextUrl.searchParams.toString())
+      }
       throw new Error(`Falha ao obter o arquivo: ${upstream.statusText || upstream.status}`)
     }
 
@@ -71,9 +89,11 @@ export async function GET(request: NextRequest) {
       ext = contentType.includes("png") ? "png" : "jpg"
     }
 
+    // Sanitização completa de nome de arquivo contra aspas curvas e caracteres problemáticos
     const safeName =
       rawName
-        .replace(/[^\p{L}\p{N}\s-]/gu, "")
+        .replace(/["'“”«»‘’`´\\]/g, "")
+        .replace(/[^\p{L}\p{N}\s_.-]/gu, "")
         .trim()
         .slice(0, 60)
         .replace(/\s+/g, "_") || "download"
@@ -83,6 +103,7 @@ export async function GET(request: NextRequest) {
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-zA-Z0-9._-]/g, "_") || "media_file"
+
     const encodedName = encodeURIComponent(`${safeName}.${ext}`)
 
     const headers = new Headers()
@@ -91,15 +112,26 @@ export async function GET(request: NextRequest) {
       "Content-Disposition",
       `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${encodedName}`,
     )
+    headers.set("Accept-Ranges", "bytes")
     headers.set("Content-Transfer-Encoding", "binary")
+    headers.set("Cache-Control", "public, max-age=3600")
 
-    const len = upstream.headers.get("content-length")
-    if (len) headers.set("Content-Length", len)
-    headers.set("Cache-Control", "no-cache, no-store, must-revalidate")
-    headers.set("Pragma", "no-cache")
+    const contentLength = upstream.headers.get("content-length")
+    if (contentLength) {
+      headers.set("Content-Length", contentLength)
+    }
 
-    return new NextResponse(upstream.body, { status: 200, headers })
+    const contentRange = upstream.headers.get("content-range")
+    if (contentRange) {
+      headers.set("Content-Range", contentRange)
+    }
+
+    // Suporta status 206 (Partial Content) para retomada de downloads pelo navegador
+    const statusCode = upstream.status === 206 ? 206 : 200
+
+    return new NextResponse(upstream.body, { status: statusCode, headers })
   } catch (err) {
+    console.error("[Download API] Error:", err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Erro ao baixar." },
       { status: 502 },

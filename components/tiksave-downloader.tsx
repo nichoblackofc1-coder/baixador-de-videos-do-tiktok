@@ -46,14 +46,17 @@ function buildDownloadHref(
   fileUrl: string,
   type: "video" | "audio" | "image",
   name: string,
+  direct?: boolean,
 ) {
   const params = new URLSearchParams({ url: fileUrl, type, name })
+  if (direct) params.set("direct", "1")
   return `/api/download?${params.toString()}`
 }
 
 function safeFileName(name: string, ext: string) {
   const base =
     name
+      .replace(/["'“”«»‘’`´\\]/g, "")
       .replace(/[\\/:*?"<>|]+/g, " ")
       .replace(/\s+/g, " ")
       .trim()
@@ -519,6 +522,20 @@ export function TikSaveDownloader() {
                     )}
                   </a>
                 ) : null}
+
+                {/* Opção de Link Direto (Fallback CDN) */}
+                {result.mediaType === "video" && result.mp4 && (
+                  <div className="pt-0.5 text-center">
+                    <a
+                      href={buildDownloadHref(result.mp4, "video", result.title, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+                    >
+                      <span>⚡ Link direto alternativo (CDN)</span>
+                    </a>
+                  </div>
+                )}
 
                 {/* Botões Utilitários */}
                 <div className="grid grid-cols-2 gap-2.5 pt-1">

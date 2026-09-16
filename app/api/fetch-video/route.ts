@@ -4,6 +4,7 @@ import * as btch from "btch-downloader"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 
 export interface UniversalMediaResult {
   platform: PlatformId | "other"
@@ -62,14 +63,21 @@ async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | nu
         (f: any) => f.url && f.type?.includes("video/mp4"),
       )
 
-      // Se não houver progressivo, pega o melhor formato MP4 adaptativo
+      // Se não houver progressivo, pega o melhor formato MP4 H.264 (evita AV1 não suportado por browsers e arquivos gigantescos)
       const adaptiveMp4s = (data.adaptiveFormats || []).filter(
-        (f: any) => f.url && f.type?.includes("video/mp4"),
+        (f: any) =>
+          f.url &&
+          f.type?.includes("video/mp4") &&
+          !f.type?.includes("av01"),
       )
+
+      // Ordena decrescente até 1080p (qualidade Full HD ideal, tamanho leve e alta velocidade)
       adaptiveMp4s.sort((a: any, b: any) => {
         const ha = parseInt(a.qualityLabel || a.resolution || "0") || a.height || 0
         const hb = parseInt(b.qualityLabel || b.resolution || "0") || b.height || 0
-        return hb - ha
+        const capA = ha > 1080 ? 0 : ha
+        const capB = hb > 1080 ? 0 : hb
+        return capB - capA
       })
       const bestAdaptive = adaptiveMp4s[0]
 
@@ -87,11 +95,16 @@ async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | nu
           thumbs.sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0]?.url ||
           `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
 
-        const quality =
+        const rawQuality =
           progressive?.qualityLabel ||
           bestAdaptive?.qualityLabel ||
           bestAdaptive?.resolution ||
           "HD 720p"
+        const quality = rawQuality.includes("1080")
+          ? "1080p Full HD"
+          : rawQuality.includes("720")
+            ? "720p HD"
+            : rawQuality
 
         return {
           platform: "youtube",
