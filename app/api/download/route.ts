@@ -71,7 +71,9 @@ export async function GET(request: NextRequest) {
       if (upstream.status === 416 && clientRange) {
         return NextResponse.redirect(request.nextUrl.pathname + "?" + request.nextUrl.searchParams.toString())
       }
-      throw new Error(`Falha ao obter o arquivo: ${upstream.statusText || upstream.status}`)
+      // Se a CDN rejeitou o servidor (ex: 403 Forbidden / 401), redireciona o navegador do usuário direto para a CDN
+      console.warn(`[Download API] Upstream ${upstream.status}, redirecionando direto para a CDN: ${fileUrl.slice(0, 80)}`)
+      return NextResponse.redirect(fileUrl, { status: 302 })
     }
 
     const contentType =
@@ -132,6 +134,10 @@ export async function GET(request: NextRequest) {
     return new NextResponse(upstream.body, { status: statusCode, headers })
   } catch (err) {
     console.error("[Download API] Error:", err)
+    if (fileUrl && isAllowedUrl(fileUrl)) {
+      console.warn(`[Download API] Exceção no stream, redirecionando direto: ${fileUrl.slice(0, 80)}`)
+      return NextResponse.redirect(fileUrl, { status: 302 })
+    }
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Erro ao baixar." },
       { status: 502 },

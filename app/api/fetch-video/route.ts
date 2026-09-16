@@ -610,8 +610,71 @@ async function extractKwai(rawUrl: string): Promise<UniversalMediaResult | null>
    7. TIKTOK EXTRACTOR (TikWM HD API + btch fallback)
    ========================================================================= */
 async function extractTikTok(rawUrl: string): Promise<UniversalMediaResult | null> {
+  // Resolve redirecionamento de links encurtados (vm.tiktok.com, vt.tiktok.com)
+  let targetUrl = rawUrl
+  if (rawUrl.includes("vm.tiktok.com") || rawUrl.includes("vt.tiktok.com")) {
+    try {
+      const head = await fetch(rawUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        },
+        redirect: "follow",
+      })
+      if (head.url && head.url.includes("tiktok.com")) {
+        targetUrl = head.url
+      }
+    } catch {}
+  }
+
+  // Estratégia 1: TikWM POST (Formato mais estável e recomendado)
   try {
-    const api = "https://www.tikwm.com/api/?hd=1&url=" + encodeURIComponent(rawUrl)
+    const params = new URLSearchParams()
+    params.append("url", targetUrl)
+    params.append("hd", "1")
+    const res = await fetch("https://www.tikwm.com/api/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "application/json",
+      },
+      body: params.toString(),
+      cache: "no-store",
+    })
+
+    if (res.ok) {
+      const json = await res.json()
+      if (json && json.code === 0 && json.data) {
+        const data = json.data
+        const mp4: string | undefined = data.hdplay || data.play || data.wmplay
+        if (mp4 && typeof mp4 === "string" && mp4.startsWith("http")) {
+          return {
+            platform: "tiktok",
+            platformName: "TikTok",
+            title: data.title || "Vídeo do TikTok",
+            author: data.author?.nickname || data.author?.unique_id || "TikTok Criador",
+            authorUniqueId: data.author?.unique_id ? `@${data.author.unique_id}` : "",
+            authorAvatar: data.author?.avatar || "",
+            cover: data.cover || data.origin_cover || "",
+            mediaType: "video",
+            quality: data.hdplay ? "HD 1080p (Sem Marca)" : "Qualidade Normal",
+            mp4,
+            downloadUrl: mp4,
+            music: typeof data.music === "string" && data.music.startsWith("http") ? data.music : "",
+            musicTitle: data.music_info?.title || "Áudio Original",
+            duration: data.duration ?? null,
+            original: rawUrl,
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Estratégia 2: TikWM GET
+  try {
+    const api = "https://www.tikwm.com/api/?hd=1&url=" + encodeURIComponent(targetUrl)
     const res = await fetch(api, {
       headers: {
         "User-Agent":
@@ -626,7 +689,7 @@ async function extractTikTok(rawUrl: string): Promise<UniversalMediaResult | nul
       if (json && json.code === 0 && json.data) {
         const data = json.data
         const mp4: string | undefined = data.hdplay || data.play || data.wmplay
-        if (mp4) {
+        if (mp4 && typeof mp4 === "string" && mp4.startsWith("http")) {
           return {
             platform: "tiktok",
             platformName: "TikTok",
@@ -639,7 +702,7 @@ async function extractTikTok(rawUrl: string): Promise<UniversalMediaResult | nul
             quality: data.hdplay ? "HD 1080p (Sem Marca)" : "Qualidade Normal",
             mp4,
             downloadUrl: mp4,
-            music: data.music || "",
+            music: typeof data.music === "string" && data.music.startsWith("http") ? data.music : "",
             musicTitle: data.music_info?.title || "Áudio Original",
             duration: data.duration ?? null,
             original: rawUrl,
@@ -649,23 +712,39 @@ async function extractTikTok(rawUrl: string): Promise<UniversalMediaResult | nul
     }
   } catch {}
 
+  // Estratégia 3: btch.ttdl com checagem segura de array
   try {
-    const data = await btch.ttdl(rawUrl)
-    if (data && (data.video || (data as any).nowm)) {
-      const mp4 = (data as any).nowm || data.video
-      return {
-        platform: "tiktok",
-        platformName: "TikTok",
-        title: data.title || "Vídeo do TikTok",
-        author: "TikTok Criador",
-        cover: data.thumbnail || "",
-        mediaType: "video",
-        quality: "HD Sem Marca",
-        mp4,
-        downloadUrl: mp4,
-        music: Array.isArray(data.audio) ? data.audio[0] : data.audio || "",
-        duration: null,
-        original: rawUrl,
+    const data = await btch.ttdl(targetUrl)
+    if (data) {
+      const rawMp4 = (data as any).nowm || data.video
+      const mp4 = Array.isArray(rawMp4)
+        ? rawMp4.find((v: any) => typeof v === "string" && v.startsWith("http")) || ""
+        : typeof rawMp4 === "string" && rawMp4.startsWith("http")
+          ? rawMp4
+          : ""
+
+      const rawAudio = data.audio
+      const music = Array.isArray(rawAudio)
+        ? rawAudio.find((a: any) => typeof a === "string" && a.startsWith("http")) || ""
+        : typeof rawAudio === "string" && rawAudio.startsWith("http")
+          ? rawAudio
+          : ""
+
+      if (mp4) {
+        return {
+          platform: "tiktok",
+          platformName: "TikTok",
+          title: data.title || "Vídeo do TikTok",
+          author: "TikTok Criador",
+          cover: typeof data.thumbnail === "string" ? data.thumbnail : "",
+          mediaType: "video",
+          quality: "HD Sem Marca",
+          mp4,
+          downloadUrl: mp4,
+          music,
+          duration: null,
+          original: rawUrl,
+        }
       }
     }
   } catch {}
@@ -810,8 +889,20 @@ export async function POST(request: NextRequest) {
       result = await extractUniversalFallback(rawUrl)
     }
 
-    if (result && (result.mp4 || result.downloadUrl || result.cover)) {
-      return NextResponse.json(result)
+    if (result) {
+      const validMp4 = typeof result.mp4 === "string" && result.mp4.startsWith("http") ? result.mp4 : ""
+      const validDl = typeof result.downloadUrl === "string" && result.downloadUrl.startsWith("http") ? result.downloadUrl : ""
+      const validMusic = typeof result.music === "string" && result.music.startsWith("http") ? result.music : ""
+      const validCover = typeof result.cover === "string" && result.cover.startsWith("http") ? result.cover : ""
+
+      result.mp4 = validMp4 || validDl
+      result.downloadUrl = validDl || validMp4
+      result.music = validMusic || undefined
+      result.cover = validCover || ""
+
+      if (result.mp4 || result.downloadUrl || result.cover) {
+        return NextResponse.json(result)
+      }
     }
 
     return NextResponse.json(
