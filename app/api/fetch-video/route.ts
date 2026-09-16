@@ -68,11 +68,16 @@ export async function POST(request: NextRequest) {
       title: data.title || "Vídeo do TikTok",
       author:
         data.author?.nickname || data.author?.unique_id || "Desconhecido",
+      authorUniqueId: data.author?.unique_id || "",
+      authorAvatar: data.author?.avatar || "",
       cover: data.cover || data.origin_cover || data.dynamic_cover || "",
       quality: data.hdplay ? "HD" : "Normal",
       mp4,
       music: data.music || "",
+      musicTitle: data.music_info?.title || "Áudio Original",
       duration: data.duration ?? null,
+      size: data.size ?? null,
+      hdSize: data.hd_size ?? null,
       original: tiktokUrl,
     })
   } catch (err) {

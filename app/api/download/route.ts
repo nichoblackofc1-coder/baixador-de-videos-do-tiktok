@@ -54,6 +54,13 @@ export async function GET(request: NextRequest) {
         .slice(0, 60)
         .replace(/\s+/g, "_") || "tiksave"
 
+    const asciiName =
+      safeName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9._-]/g, "_") || "tiktok_video"
+    const encodedName = encodeURIComponent(`${safeName}.${ext}`)
+
     const headers = new Headers()
     headers.set(
       "Content-Type",
@@ -61,11 +68,13 @@ export async function GET(request: NextRequest) {
     )
     headers.set(
       "Content-Disposition",
-      `attachment; filename="${safeName}.${ext}"`,
+      `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${encodedName}`,
     )
+    headers.set("Content-Transfer-Encoding", "binary")
     const len = upstream.headers.get("content-length")
     if (len) headers.set("Content-Length", len)
-    headers.set("Cache-Control", "no-store")
+    headers.set("Cache-Control", "no-cache, no-store, must-revalidate")
+    headers.set("Pragma", "no-cache")
 
     return new NextResponse(upstream.body, { status: 200, headers })
   } catch (err) {
