@@ -40,6 +40,8 @@ type UniversalResult = {
   musicTitle?: string
   duration: number | null
   original: string
+  videoId?: string
+  embedUrl?: string
 }
 
 function buildDownloadHref(
@@ -117,6 +119,11 @@ export function TikSaveDownloader() {
     rawTitle: string,
   ) {
     if (downloadProgress.type) return
+
+    if (mediaUrl.includes("ssyoutube") || mediaUrl.includes("savefrom") || mediaUrl.includes("y2mate")) {
+      window.open(mediaUrl, "_blank")
+      return
+    }
 
     const ext = type === "audio" ? "mp3" : type === "image" ? "jpg" : "mp4"
     const fileName = safeFileName(rawTitle, ext)
@@ -229,10 +236,21 @@ export function TikSaveDownloader() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: trimmed }),
       })
-      const data = await res.json()
+
+      const rawText = await res.text()
+      let data: any = null
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        // Se a resposta foi HTML (ex: 504 Gateway Timeout ou 502 da Vercel)
+        if (res.status === 504 || rawText.includes("Gateway Timeout")) {
+          throw new Error("O servidor demorou para responder. Tente novamente.")
+        }
+        throw new Error(t.genericFetchError || "Não foi possível carregar a mídia. Verifique o link e tente novamente.")
+      }
 
       if (!res.ok) {
-        throw new Error(data.error || t.genericFetchError)
+        throw new Error(data?.error || t.genericFetchError)
       }
 
       setResult(data as UniversalResult)
@@ -433,7 +451,17 @@ export function TikSaveDownloader() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start text-left">
             {/* Coluna Esquerda: Preview da Mídia */}
             <div className="lg:col-span-5 flex flex-col items-center">
-              {result.mediaType === "video" ? (
+              {result.platform === "youtube" ? (
+                <div className="relative aspect-video w-full max-w-[340px] sm:max-w-[400px] overflow-hidden rounded-2xl bg-black shadow-lg border border-slate-200/80">
+                  <iframe
+                    src={result.embedUrl || `https://www.youtube-nocookie.com/embed/${result.videoId || ""}?rel=0`}
+                    title={result.title}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="h-full w-full border-0"
+                  />
+                </div>
+              ) : result.mediaType === "video" ? (
                 <div className="relative aspect-[9/16] w-full max-w-[280px] sm:max-w-[310px] overflow-hidden rounded-2xl bg-slate-950 shadow-lg border border-slate-200/80 group">
                   <div className="pointer-events-none absolute top-3 left-3 z-10 flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md">
                     <Film className="size-3 text-blue-400" />
@@ -669,8 +697,20 @@ export function TikSaveDownloader() {
                   </button>
                 ) : null}
 
-                {/* Opção de Link Direto (Fallback 100% da Plataforma) */}
-                {result.mediaType === "video" && result.mp4 && (
+                {/* Servidor Alternativo para YouTube ou Link Direto CDN */}
+                {result.platform === "youtube" ? (
+                  <div className="pt-0.5 text-center">
+                    <a
+                      href={`https://ssyoutube.com/watch?v=${result.videoId || ""}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors font-semibold"
+                    >
+                      <ExternalLink className="size-3.5 text-blue-500" />
+                      <span>⚡ Baixar via Servidor de Alta Velocidade (1080p / MP3)</span>
+                    </a>
+                  </div>
+                ) : result.mediaType === "video" && result.mp4 ? (
                   <div className="pt-0.5 text-center">
                     <a
                       href={result.mp4}
@@ -682,7 +722,7 @@ export function TikSaveDownloader() {
                       <span>⚡ Link direto alternativo (CDN)</span>
                     </a>
                   </div>
-                )}
+                ) : null}
 
                 {/* Botões Utilitários */}
                 <div className="grid grid-cols-2 gap-2.5 pt-1">

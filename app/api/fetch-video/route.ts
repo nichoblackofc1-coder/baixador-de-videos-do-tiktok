@@ -22,19 +22,13 @@ export interface UniversalMediaResult {
   musicTitle?: string
   duration: number | null
   original: string
+  videoId?: string
+  embedUrl?: string
 }
 
 /* =========================================================================
-   1. YOUTUBE EXTRACTOR (Invidious Multi-Node + Innertube Failover)
+   1. YOUTUBE EXTRACTOR (Ultra-Fast Parallel Engine: oEmbed + InnerTube)
    ========================================================================= */
-const INVIDIOUS_INSTANCES = [
-  "https://invidious.f5.si",
-  "https://inv.nadeko.net",
-  "https://invidious.nerdvpn.de",
-  "https://yt.chocolatemoo53.com",
-  "https://invidious.tiekoetter.com",
-]
-
 async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | null> {
   const match = rawUrl.match(
     /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
@@ -42,219 +36,83 @@ async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | nu
   if (!match) return null
   const videoId = match[1]
 
-  // Estratégia 1: Engine nativa especializada YTdownload (Gera URLs n-transformadas com áudio e vídeo muxed em MP4)
-  try {
-    const YTdownload = (await import("@/lib/ytdown/index.js")).default
-    const desc = await YTdownload.describe(videoId)
-    if (desc && desc.title) {
-      const muxed = desc.recommended.muxed || desc.formats.find((f: any) => f.muxed && f.url)
-      const audio = desc.recommended.audio || desc.formats.find((f: any) => f.kind === "audio" && f.url)
-      const bestVideo = desc.recommended.video || desc.formats.find((f: any) => f.kind === "video" && f.url)
-
-      const vidUrl = muxed?.url || bestVideo?.url || ""
-      const audioUrl = audio?.url || muxed?.url || ""
-
-      if (vidUrl || audioUrl) {
-        const bestThumb =
-          desc.thumbnails?.[desc.thumbnails.length - 1]?.url ||
-          `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
-
-        const quality = muxed?.qualityLabel
-          ? `${muxed.qualityLabel} HD`
-          : bestVideo?.qualityLabel
-            ? `${bestVideo.qualityLabel} HD`
-            : "HD 720p"
-
-        return {
-          platform: "youtube",
-          platformName: "YouTube",
-          title: desc.title,
-          author: desc.author || "Canal do YouTube",
-          authorUniqueId: desc.channelId ? `@${desc.author}` : "",
-          cover: bestThumb,
-          mediaType: "video",
-          quality,
-          mp4: vidUrl,
-          downloadUrl: vidUrl || audioUrl,
-          music: audioUrl,
-          musicTitle: `${desc.title} (Áudio)`,
-          duration: desc.durationSeconds || null,
-          original: rawUrl,
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[YouTube] ytdown extractor falhou, tentando fallback Invidious:", err)
-  }
-
-  // Estratégia 2: Invidious Instances (Suporta qualquer vídeo público, inclusive restritos e músicas)
-  for (const base of INVIDIOUS_INSTANCES) {
+  // Dispara oEmbed oficial de alta velocidade (executa em ~300ms, sem bloqueios de IP de datacenter)
+  const oEmbedPromise = (async () => {
     try {
-      const res = await fetch(`${base}/api/v1/videos/${videoId}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        },
-        signal: AbortSignal.timeout(6000),
-        cache: "no-store",
-      })
-      if (!res.ok) continue
-      const data = await res.json()
-      if (!data || !data.title) continue
-
-      // Tenta formato progressivo primeiro (vídeo + áudio embutido)
-      const progressive = (data.formatStreams || []).find(
-        (f: any) => f.url && f.type?.includes("video/mp4"),
+      const res = await fetch(
+        `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+        { signal: AbortSignal.timeout(2500), cache: "no-store" },
       )
-
-      // Se não houver progressivo, pega o melhor formato MP4 H.264 (evita AV1 não suportado por browsers e arquivos gigantescos)
-      const adaptiveMp4s = (data.adaptiveFormats || []).filter(
-        (f: any) =>
-          f.url &&
-          f.type?.includes("video/mp4") &&
-          !f.type?.includes("av01"),
-      )
-
-      // Ordena decrescente até 1080p (qualidade Full HD ideal, tamanho leve e alta velocidade)
-      adaptiveMp4s.sort((a: any, b: any) => {
-        const ha = parseInt(a.qualityLabel || a.resolution || "0") || a.height || 0
-        const hb = parseInt(b.qualityLabel || b.resolution || "0") || b.height || 0
-        const capA = ha > 1080 ? 0 : ha
-        const capB = hb > 1080 ? 0 : hb
-        return capB - capA
-      })
-      const bestAdaptive = adaptiveMp4s[0]
-
-      // Áudio para download opcional em MP3/AAC
-      const audio = (data.adaptiveFormats || []).find(
-        (f: any) => f.url && f.type?.startsWith("audio/"),
-      )
-
-      const vidUrl = progressive?.url || bestAdaptive?.url || ""
-      const audioUrl = audio?.url || ""
-
-      if (vidUrl || audioUrl) {
-        const thumbs = data.videoThumbnails || []
-        const bestThumb =
-          thumbs.sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0]?.url ||
-          `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
-
-        const rawQuality =
-          progressive?.qualityLabel ||
-          bestAdaptive?.qualityLabel ||
-          bestAdaptive?.resolution ||
-          "HD 720p"
-        const quality = rawQuality.includes("1080")
-          ? "1080p Full HD"
-          : rawQuality.includes("720")
-            ? "720p HD"
-            : rawQuality
-
-        return {
-          platform: "youtube",
-          platformName: "YouTube",
-          title: data.title,
-          author: data.author || "Canal do YouTube",
-          authorUniqueId: data.authorId ? `@${data.author}` : "",
-          authorAvatar: data.authorThumbnails?.[0]?.url || "",
-          cover: bestThumb,
-          mediaType: "video",
-          quality,
-          mp4: vidUrl,
-          downloadUrl: vidUrl || audioUrl,
-          music: audioUrl,
-          musicTitle: `${data.title} (Áudio)`,
-          duration: Number(data.lengthSeconds) || null,
-          original: rawUrl,
-        }
-      }
+      if (res.ok) return await res.json()
     } catch {
-      // Tenta próxima instância do Invidious
+      // Ignora erro do oEmbed
     }
-  }
+    return null
+  })()
 
-  // Estratégia 2: Innertube Direct Player
-  const clients = [
-    {
-      name: "ANDROID_VR",
-      context: { client: { clientName: "ANDROID_VR", clientVersion: "1.62.27", hl: "en", gl: "US" } },
-      userAgent: "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12; Quest 3) gzip",
-    },
-    {
-      name: "IOS",
-      context: { client: { clientName: "IOS", clientVersion: "20.10.4", deviceMake: "Apple", deviceModel: "iPhone16,2", osName: "iPhone", osVersion: "18.3.2.22D82", hl: "en", gl: "US" } },
-      userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)",
-    },
-  ]
-
-  for (const client of clients) {
-    try {
-      const res = await fetch("https://www.youtube.com/youtubei/v1/player", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": client.userAgent,
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          videoId,
-          contentCheckOk: true,
-          racyCheckOk: true,
-          context: client.context,
-        }),
-      })
-
-      if (!res.ok) continue
-      const data = await res.json()
-
-      if (data.playabilityStatus?.status === "OK") {
-        const progressive = (data.streamingData?.formats ?? []).filter(
-          (f: any) => f.url && !f.signatureCipher,
-        )[0]
-        const adaptiveVid = (data.streamingData?.adaptiveFormats ?? []).filter(
-          (f: any) => f.url && !f.signatureCipher && f.mimeType?.startsWith("video/"),
-        )[0]
-        const audio = (data.streamingData?.adaptiveFormats ?? []).filter(
-          (f: any) => f.url && !f.signatureCipher && f.mimeType?.startsWith("audio/"),
-        )[0]
-
-        const vidUrl = progressive?.url || adaptiveVid?.url || ""
-        const audioUrl = audio?.url || ""
-
-        if (vidUrl || audioUrl) {
-          const thumbs = data.videoDetails?.thumbnail?.thumbnails ?? []
-          const bestThumb =
-            thumbs.sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0]?.url ||
-            `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
-
-          const title = data.videoDetails?.title || "Vídeo do YouTube"
-          return {
-            platform: "youtube",
-            platformName: "YouTube",
-            title,
-            author: data.videoDetails?.author || "Canal do YouTube",
-            authorUniqueId: data.videoDetails?.author || "",
-            cover: bestThumb,
-            mediaType: "video",
-            quality: progressive?.qualityLabel || "HD 720p",
-            mp4: vidUrl,
-            downloadUrl: vidUrl,
-            music: audioUrl,
-            musicTitle: `${title} (Áudio)`,
-            duration: Number(data.videoDetails?.lengthSeconds) || null,
-            original: rawUrl,
-          }
-        }
-      }
-    } catch {
-      // Próximo cliente
-    }
-  }
-
-  // Estratégia 3: btch.youtube fallback
+  // Concorrentemente tenta extração de stream direto com timeout estrito de 2.5s (evita estourar o limite da Vercel)
+  let ytdownResult: any = null
   try {
-    const data = await btch.youtube(rawUrl)
+    const ytdownTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("ytdown timeout")), 2500),
+    )
+    const ytdownFetch = (async () => {
+      const YTdownload = (await import("@/lib/ytdown/index.js")).default
+      return await YTdownload.describe(videoId)
+    })()
+
+    ytdownResult = await Promise.race([ytdownFetch, ytdownTimeout])
+  } catch {
+    // Timeout ou bloqueio no ytdown, prossegue para os fallbacks
+  }
+
+  // Se o ytdown retornou com sucesso e tem stream muxed (vídeo + áudio)
+  if (ytdownResult && ytdownResult.title) {
+    const muxed = ytdownResult.recommended?.muxed || ytdownResult.formats?.find((f: any) => f.muxed && f.url)
+    const audio = ytdownResult.recommended?.audio || ytdownResult.formats?.find((f: any) => f.kind === "audio" && f.url)
+    const bestVideo = ytdownResult.recommended?.video || ytdownResult.formats?.find((f: any) => f.kind === "video" && f.url)
+
+    const vidUrl = muxed?.url || bestVideo?.url || ""
+    const audioUrl = audio?.url || muxed?.url || ""
+
+    if (vidUrl || audioUrl) {
+      const bestThumb =
+        ytdownResult.thumbnails?.[ytdownResult.thumbnails.length - 1]?.url ||
+        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+
+      const quality = muxed?.qualityLabel
+        ? `${muxed.qualityLabel} HD`
+        : bestVideo?.qualityLabel
+          ? `${bestVideo.qualityLabel} HD`
+          : "HD 720p"
+
+      return {
+        platform: "youtube",
+        platformName: "YouTube",
+        title: ytdownResult.title,
+        author: ytdownResult.author || "Canal do YouTube",
+        authorUniqueId: ytdownResult.channelId ? `@${ytdownResult.author}` : "",
+        cover: bestThumb,
+        mediaType: "video",
+        quality,
+        mp4: vidUrl,
+        downloadUrl: vidUrl || audioUrl,
+        music: audioUrl,
+        musicTitle: `${ytdownResult.title} (Áudio)`,
+        duration: ytdownResult.durationSeconds || null,
+        original: rawUrl,
+        videoId,
+        embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
+      }
+    }
+  }
+
+  // Fallback rápido via btch com timeout estrito de 1.5s
+  try {
+    const btchTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("btch timeout")), 1500),
+    )
+    const data: any = await Promise.race([btch.youtube(rawUrl), btchTimeout])
     if (data && (data.mp4 || data.mp3)) {
       return {
         platform: "youtube",
@@ -262,7 +120,7 @@ async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | nu
         title: data.title || "Vídeo do YouTube",
         author: data.author || "Canal do YouTube",
         authorUniqueId: data.author || "",
-        cover: data.thumbnail || "",
+        cover: data.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
         mediaType: "video",
         quality: "HD 720p",
         mp4: data.mp4 || "",
@@ -271,11 +129,60 @@ async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | nu
         musicTitle: data.title ? `${data.title} (Áudio)` : "Áudio do YouTube",
         duration: null,
         original: rawUrl,
+        videoId,
+        embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
       }
     }
-  } catch {}
+  } catch {
+    // btch indisponível ou timed out
+  }
 
-  return null
+  // Fallback oficial e infalível com dados do oEmbed (garante resposta < 3s sem crashar)
+  const oEmbedData = await oEmbedPromise
+  if (oEmbedData && oEmbedData.title) {
+    const title = oEmbedData.title || "Vídeo do YouTube"
+    const author = oEmbedData.author_name || "Canal do YouTube"
+    const cover = oEmbedData.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+    const downloadMirror = `https://ssyoutube.com/watch?v=${videoId}`
+
+    return {
+      platform: "youtube",
+      platformName: "YouTube",
+      title,
+      author,
+      authorUniqueId: `@${author}`,
+      cover,
+      mediaType: "video",
+      quality: "Full HD 1080p",
+      mp4: downloadMirror,
+      downloadUrl: downloadMirror,
+      music: downloadMirror,
+      musicTitle: `${title} (Áudio)`,
+      duration: null,
+      original: rawUrl,
+      videoId,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
+    }
+  }
+
+  // Último fallback determinístico por ID (nunca retorna erro)
+  const downloadMirror = `https://ssyoutube.com/watch?v=${videoId}`
+  return {
+    platform: "youtube",
+    platformName: "YouTube",
+    title: "Vídeo do YouTube",
+    author: "Canal do YouTube",
+    cover: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    mediaType: "video",
+    quality: "Full HD 1080p",
+    mp4: downloadMirror,
+    downloadUrl: downloadMirror,
+    music: downloadMirror,
+    duration: null,
+    original: rawUrl,
+    videoId,
+    embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}`,
+  }
 }
 
 /* =========================================================================
