@@ -5,7 +5,7 @@ import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
 import { Readable } from "node:stream"
-import { getFfmpegPath } from "@/lib/extractor"
+import { getFfmpegPath, isPythonAvailable } from "@/lib/extractor"
 
 const execFileAsync = promisify(execFile)
 
@@ -77,48 +77,107 @@ function isSocialPageUrl(url: string) {
   )
 }
 
+/** Obtém o executor do yt-dlp (Python local no Windows ou binário standalone no Linux/Vercel) */
+async function getYtDlpRunner(): Promise<{ bin: string; prefixArgs: string[]; hasFfmpeg: boolean } | null> {
+  // 1. Windows Local
+  if (process.platform === "win32") {
+    if (isPythonAvailable()) {
+      return { bin: "python", prefixArgs: ["-m", "yt_dlp"], hasFfmpeg: true }
+    }
+  }
+
+  // 2. Linux (Ambiente Vercel Serverless ou Container)
+  if (process.platform === "linux") {
+    const tmpBin = path.join(os.tmpdir(), "yt-dlp")
+    if (fs.existsSync(tmpBin)) {
+      return { bin: tmpBin, prefixArgs: [], hasFfmpeg: false }
+    }
+
+    try {
+      console.log("[Download API] Baixando yt-dlp standalone Linux para /tmp/yt-dlp...")
+      const res = await fetch("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux", {
+        headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)" },
+        signal: AbortSignal.timeout(30000),
+      })
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer())
+        await fs.promises.writeFile(tmpBin, buf, { mode: 0o755 })
+        try {
+          fs.chmodSync(tmpBin, 0o755)
+        } catch {}
+        console.log("[Download API] yt-dlp standalone Linux pronto em /tmp/yt-dlp")
+        return { bin: tmpBin, prefixArgs: [], hasFfmpeg: false }
+      }
+    } catch (err: any) {
+      console.error("[Download API] Falha ao baixar yt-dlp_linux:", err?.message || err)
+    }
+
+    if (isPythonAvailable()) {
+      return { bin: "python3", prefixArgs: ["-m", "yt_dlp"], hasFfmpeg: false }
+    }
+  }
+
+  return isPythonAvailable()
+    ? { bin: "python", prefixArgs: ["-m", "yt_dlp"], hasFfmpeg: true }
+    : null
+}
+
 /** Executa yt-dlp para baixar em arquivo temporário e faz stream direto */
 async function downloadAndStreamWithYtDlp(
   targetUrl: string,
   type: "video" | "audio",
   rawName: string,
 ) {
+  const runner = await getYtDlpRunner()
+  if (!runner) {
+    console.warn(`[Download API] Nenhum runner yt-dlp disponível para ${targetUrl.slice(0, 60)}`)
+    return null
+  }
+
+  const { bin, prefixArgs, hasFfmpeg } = runner
   const ffmpegPath = getFfmpegPath()
-  const ext = type === "audio" ? "mp3" : "mp4"
+  const ext = type === "audio" ? (hasFfmpeg ? "mp3" : "m4a") : "mp4"
   const { asciiName, encodedName } = sanitizeFileName(rawName, ext)
 
   const tempPrefix = `tiksave_${Date.now()}_${Math.random().toString(36).slice(2)}`
   const templatePath = path.join(os.tmpdir(), `${tempPrefix}.%(ext)s`)
 
   const args = [
-    "-m",
-    "yt_dlp",
+    ...prefixArgs,
     "--no-playlist",
-    "--remote-components",
-    "ejs:github",
-    "--ffmpeg-location",
-    ffmpegPath,
-    "--js-runtimes",
-    "node",
+    "--extractor-args",
+    "youtube:player_client=android,ios,web",
+    "--user-agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   ]
 
-  if (type === "audio") {
-    args.push("-x", "--audio-format", "mp3")
+  if (hasFfmpeg) {
+    args.push("--ffmpeg-location", ffmpegPath)
+    if (type === "audio") {
+      args.push("-x", "--audio-format", "mp3")
+    } else {
+      args.push(
+        "-f",
+        "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/b/best",
+        "--merge-output-format",
+        "mp4",
+      )
+    }
   } else {
-    args.push(
-      "-f",
-      "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/best",
-      "--merge-output-format",
-      "mp4",
-    )
+    // Modo sem FFmpeg (Vercel): baixa formato único com vídeo e áudio já mesclados
+    if (type === "audio") {
+      args.push("-f", "ba[ext=m4a]/ba/bestaudio/best")
+    } else {
+      args.push("-f", "b[ext=mp4]/b/best[height<=720]/best")
+    }
   }
 
   args.push("-o", templatePath, targetUrl)
 
   try {
-    await execFileAsync("python", args, {
+    await execFileAsync(bin, args, {
       timeout: 90000,
-      maxBuffer: 20 * 1024 * 1024,
+      maxBuffer: 25 * 1024 * 1024,
     })
 
     // Localiza o arquivo baixado
@@ -130,6 +189,7 @@ async function downloadAndStreamWithYtDlp(
 
     const fullPath = path.join(os.tmpdir(), createdFile)
     const stat = await fs.promises.stat(fullPath)
+    const actualExt = path.extname(createdFile).replace(".", "") || ext
 
     const fileStream = fs.createReadStream(fullPath)
     // Limpa o arquivo temporário após o encerramento do stream
@@ -140,12 +200,21 @@ async function downloadAndStreamWithYtDlp(
       fs.promises.unlink(fullPath).catch(() => {})
     })
 
+    const contentType =
+      actualExt === "mp3"
+        ? "audio/mpeg"
+        : actualExt === "m4a"
+          ? "audio/mp4"
+          : actualExt === "webm"
+            ? "video/webm"
+            : "video/mp4"
+
     const webStream = Readable.toWeb(fileStream)
     return new Response(webStream as any, {
       status: 200,
       headers: {
-        "Content-Type": type === "audio" ? "audio/mpeg" : "video/mp4",
-        "Content-Disposition": `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${encodedName}`,
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${asciiName}.${actualExt}"; filename*=UTF-8''${encodedName}`,
         "Content-Length": String(stat.size),
         "Accept-Ranges": "bytes",
         "Cache-Control": "public, max-age=3600",

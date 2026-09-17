@@ -143,7 +143,12 @@ export function TikSaveDownloader() {
 
       const res = await fetch(downloadApiUrl)
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`)
+        let errMsg = "Não foi possível processar o download desta mídia no momento."
+        try {
+          const errData = await res.json()
+          if (errData?.error) errMsg = errData.error
+        } catch {}
+        throw new Error(errMsg)
       }
 
       setDownloadProgress({
@@ -153,6 +158,15 @@ export function TikSaveDownloader() {
       })
 
       const blob = await res.blob()
+
+      // Validação estrita: se for minúsculo (< 4KB) ou contiver JSON/HTML de erro, interrompe
+      if (blob.size < 4096) {
+        const textCheck = await blob.text().catch(() => "")
+        if (textCheck.includes("error") || textCheck.includes("<html") || textCheck.includes("<!DOCTYPE")) {
+          throw new Error("O servidor não conseguiu extrair os dados de áudio/vídeo deste link. Tente outro vídeo ou plataforma.")
+        }
+      }
+
       const blobUrl = window.URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = blobUrl
@@ -171,22 +185,13 @@ export function TikSaveDownloader() {
         setDownloadProgress({ type: null, percent: 0, label: "" })
       }, 3500)
     } catch (err) {
-      console.warn("[Download] Falha no blob em memória, acionando download nativo:", err)
-      const a = document.createElement("a")
-      a.href = downloadApiUrl
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-
-      setDownloadProgress({
-        type,
-        percent: 100,
-        label: "Iniciando download...",
-      })
-      setTimeout(() => {
-        setDownloadProgress({ type: null, percent: 0, label: "" })
-      }, 3500)
+      console.warn("[Download] Erro no download da mídia:", err)
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível concluir o download. Verifique se o vídeo está público e tente novamente.",
+      )
+      setDownloadProgress({ type: null, percent: 0, label: "" })
     }
   }
 
