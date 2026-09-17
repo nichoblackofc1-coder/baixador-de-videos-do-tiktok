@@ -186,97 +186,92 @@ async function extractYouTube(rawUrl: string): Promise<UniversalMediaResult | nu
 }
 
 /* =========================================================================
-   2. INSTAGRAM EXTRACTOR (Snapsave Core + Direct Scraper Fallback)
+   2. INSTAGRAM EXTRACTOR (oEmbed + btch parallel, com timeouts estritos)
    ========================================================================= */
 async function extractInstagram(rawUrl: string): Promise<UniversalMediaResult | null> {
-  // Estratégia 1: snapsave-media-downloader (Mais recente e estável)
-  try {
-    const { snapsave } = await import("snapsave-media-downloader")
-    const res = await snapsave(rawUrl)
-    if (res && res.success && res.data?.media && res.data.media.length > 0) {
-      const first = res.data.media[0]
-      const mediaUrl = first.url || ""
-      const isVideo = first.type === "video" || mediaUrl.includes(".mp4")
-      if (mediaUrl) {
-        return {
-          platform: "instagram",
-          platformName: "Instagram",
-          title: "Publicação do Instagram",
-          author: "Instagram Criador",
-          cover: first.thumbnail || mediaUrl,
-          mediaType: isVideo ? "video" : "image",
-          quality: isVideo ? "HD Original" : "Alta Resolução",
-          mp4: isVideo ? mediaUrl : "",
-          downloadUrl: mediaUrl,
-          duration: null,
-          original: rawUrl,
-        }
-      }
+  // Dispara oEmbed do Instagram em paralelo (dá título, autor, thumbnail em ~600ms)
+  const oEmbedPromise = (async () => {
+    try {
+      const res = await fetch(
+        `https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(rawUrl)}`,
+        { signal: AbortSignal.timeout(3000), cache: "no-store" },
+      )
+      if (res.ok) return await res.json()
+    } catch {
+      // Ignora erro oEmbed
     }
-  } catch {}
+    return null
+  })()
 
-  // Estratégia 2: btch.igdl
-  try {
-    const data = await btch.igdl(rawUrl)
-    if (data && data.status && Array.isArray(data.result) && data.result.length > 0) {
-      const valid = data.result.find((r: any) => r.url && r.url.length > 5) || data.result[0]
-      if (valid && valid.url) {
-        const isVideo = valid.url.includes(".mp4") || valid.url.includes("video")
-        return {
-          platform: "instagram",
-          platformName: "Instagram",
-          title: "Publicação do Instagram",
-          author: "Instagram Criador",
-          cover: valid.thumbnail || valid.url,
-          mediaType: isVideo ? "video" : "image",
-          quality: "Alta Resolução",
-          mp4: isVideo ? valid.url : "",
-          downloadUrl: valid.url,
-          duration: null,
-          original: rawUrl,
-        }
-      }
+  // Dispara btch.igdl em paralelo com timeout estrito de 6s (dá URL direta do vídeo via proxy)
+  const btchPromise = (async () => {
+    try {
+      const timeout = new Promise<null>((_, rej) => setTimeout(() => rej(new Error("btch timeout")), 6000))
+      const result = btch.igdl(rawUrl)
+      return await Promise.race([result, timeout])
+    } catch {
+      return null
     }
-  } catch {}
+  })()
+
+  // Aguarda ambos em paralelo
+  const [oEmbedData, btchData]: any[] = await Promise.all([oEmbedPromise, btchPromise])
+
+  // Extrai URL direta do vídeo do btch
+  const valid = btchData?.result?.find((r: any) => r.url && r.url.length > 5) || btchData?.result?.[0]
+  const mediaUrl = valid?.url || ""
+  const isVideo = mediaUrl.includes("rapidcdn") || mediaUrl.includes(".mp4") || mediaUrl.includes("video")
+
+  const title = oEmbedData?.title?.split("\n")?.[0]?.slice(0, 150) || "Publicação do Instagram"
+  const author = oEmbedData?.author_name || "Instagram"
+  const cover = valid?.thumbnail || oEmbedData?.thumbnail_url || ""
+
+  if (mediaUrl) {
+    return {
+      platform: "instagram",
+      platformName: "Instagram",
+      title,
+      author,
+      authorUniqueId: oEmbedData?.author_url ? `@${oEmbedData.author_url.split("/").filter(Boolean).pop()}` : "",
+      cover,
+      mediaType: isVideo ? "video" : "image",
+      quality: isVideo ? "HD Original" : "Alta Resolução",
+      mp4: isVideo ? mediaUrl : "",
+      downloadUrl: mediaUrl,
+      duration: null,
+      original: rawUrl,
+    }
+  }
+
+  // Fallback: só oEmbed (sem URL de download, mas com metadados)
+  if (oEmbedData?.thumbnail_url) {
+    return {
+      platform: "instagram",
+      platformName: "Instagram",
+      title,
+      author,
+      cover: oEmbedData.thumbnail_url,
+      mediaType: "image",
+      quality: "Resolução Original",
+      mp4: "",
+      downloadUrl: oEmbedData.thumbnail_url,
+      duration: null,
+      original: rawUrl,
+    }
+  }
 
   return null
 }
 
+
 /* =========================================================================
-   3. FACEBOOK EXTRACTOR (Snapsave Core + btch.fbdown Fallback)
+   3. FACEBOOK EXTRACTOR (btch.fbdown com timeout estrito)
    ========================================================================= */
 async function extractFacebook(rawUrl: string): Promise<UniversalMediaResult | null> {
-  // Estratégia 1: snapsave-media-downloader
+  // Estratégia 1: btch.fbdown com timeout estrito de 6s
   try {
-    const { snapsave } = await import("snapsave-media-downloader")
-    const res = await snapsave(rawUrl)
-    if (res && res.success && res.data?.media && res.data.media.length > 0) {
-      // Pega a versão com maior resolução (HD preferencial)
-      const hdVid =
-        res.data.media.find((m: any) => m.resolution?.includes("HD") || m.resolution?.includes("720") || m.resolution?.includes("1080")) ||
-        res.data.media[0]
-
-      if (hdVid && hdVid.url) {
-        return {
-          platform: "facebook",
-          platformName: "Facebook",
-          title: res.data.description || "Vídeo do Facebook",
-          author: "Página do Facebook",
-          cover: res.data.preview || "",
-          mediaType: "video",
-          quality: hdVid.resolution || "HD",
-          mp4: hdVid.url,
-          downloadUrl: hdVid.url,
-          duration: null,
-          original: rawUrl,
-        }
-      }
-    }
-  } catch {}
-
-  // Estratégia 2: btch.fbdown
-  try {
-    const data = await btch.fbdown(rawUrl)
+    const timeout = new Promise<null>((_, rej) => setTimeout(() => rej(new Error("fbdown timeout")), 6000))
+    const data: any = await Promise.race([btch.fbdown(rawUrl), timeout])
     if (data && (data.HD || data.Normal_video)) {
       const mp4 = data.HD || data.Normal_video || ""
       return {
@@ -297,6 +292,7 @@ async function extractFacebook(rawUrl: string): Promise<UniversalMediaResult | n
 
   return null
 }
+
 
 /* =========================================================================
    4. TWITTER / X EXTRACTOR (fxtwitter + vxtwitter API)
@@ -708,32 +704,6 @@ async function extractTikTok(rawUrl: string): Promise<UniversalMediaResult | nul
    8. UNIVERSAL FALLBACK SCRAPER (OpenGraph / HTML5 video)
    ========================================================================= */
 async function extractUniversalFallback(rawUrl: string): Promise<UniversalMediaResult | null> {
-  // Tenta snapsave como fallback universal (reconhece IG, FB, TT, etc.)
-  try {
-    const { snapsave } = await import("snapsave-media-downloader")
-    const res = await snapsave(rawUrl)
-    if (res && res.success && res.data?.media && res.data.media.length > 0) {
-      const first = res.data.media[0]
-      const mediaUrl = first.url || ""
-      const isVideo = first.type === "video" || mediaUrl.includes(".mp4")
-      if (mediaUrl) {
-        return {
-          platform: "other",
-          platformName: "Download Direto",
-          title: typeof res.data.description === "string" ? res.data.description : "Mídia Baixada",
-          author: "Criador",
-          cover: first.thumbnail || (typeof res.data.preview === "string" ? res.data.preview : "") || mediaUrl,
-          mediaType: isVideo ? "video" : "image",
-          quality: first.resolution || "HD Original",
-          mp4: isVideo ? mediaUrl : "",
-          downloadUrl: mediaUrl,
-          duration: null,
-          original: rawUrl,
-        }
-      }
-    }
-  } catch {}
-
   // Scraper genérico de meta tags
   try {
     const res = await fetch(rawUrl, {
