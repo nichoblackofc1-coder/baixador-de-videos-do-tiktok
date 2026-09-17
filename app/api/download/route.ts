@@ -90,14 +90,48 @@ async function getYtDlpRunner(): Promise<{ bin: string; prefixArgs: string[]; ha
   if (process.platform === "linux") {
     const tmpBin = path.join(os.tmpdir(), "yt-dlp")
     if (fs.existsSync(tmpBin)) {
-      return { bin: tmpBin, prefixArgs: [], hasFfmpeg: false }
+      try {
+        const stat = fs.statSync(tmpBin)
+        if (stat.size > 10000000) {
+          return { bin: tmpBin, prefixArgs: [], hasFfmpeg: false }
+        }
+      } catch {}
     }
 
+    // Procura o binário pré-empacotado yt-dlp_linux nos caminhos do bundle Vercel/Node
+    const candidatePaths = [
+      path.join(process.cwd(), "bin", "yt-dlp_linux"),
+      path.resolve("bin", "yt-dlp_linux"),
+      path.join(__dirname, "bin", "yt-dlp_linux"),
+      path.join(__dirname, "..", "bin", "yt-dlp_linux"),
+      path.join(__dirname, "..", "..", "bin", "yt-dlp_linux"),
+      path.join(__dirname, "..", "..", "..", "bin", "yt-dlp_linux"),
+      path.join(__dirname, "..", "..", "..", "..", "bin", "yt-dlp_linux"),
+    ]
+
+    for (const cand of candidatePaths) {
+      try {
+        if (fs.existsSync(cand)) {
+          const s = fs.statSync(cand)
+          if (s.size > 10000000) {
+            console.log(`[Download API] Copiando yt-dlp empacotado (${cand}) para ${tmpBin}...`)
+            fs.copyFileSync(cand, tmpBin)
+            fs.chmodSync(tmpBin, 0o755)
+            console.log(`[Download API] yt-dlp empacotado pronto em ${tmpBin}`)
+            return { bin: tmpBin, prefixArgs: [], hasFfmpeg: false }
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[Download API] Falha ao inspecionar ${cand}:`, err?.message || err)
+      }
+    }
+
+    // Fallback de contingência: se por algum motivo o binário empacotado não estiver presente
     try {
       console.log("[Download API] Baixando yt-dlp standalone Linux para /tmp/yt-dlp...")
       const res = await fetch("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux", {
         headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)" },
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(15000),
       })
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer())
@@ -122,11 +156,12 @@ async function getYtDlpRunner(): Promise<{ bin: string; prefixArgs: string[]; ha
     : null
 }
 
-/** Executa yt-dlp para baixar em arquivo temporário e faz stream direto */
+/** Executa yt-dlp: tenta streaming de alta velocidade via CDN (-g) e cai em arquivo temporário como fallback */
 async function downloadAndStreamWithYtDlp(
   targetUrl: string,
   type: "video" | "audio",
   rawName: string,
+  clientRange?: string | null,
 ) {
   const runner = await getYtDlpRunner()
   if (!runner) {
@@ -136,9 +171,107 @@ async function downloadAndStreamWithYtDlp(
 
   const { bin, prefixArgs, hasFfmpeg } = runner
   const ffmpegPath = getFfmpegPath()
-  const ext = type === "audio" ? (hasFfmpeg ? "mp3" : "m4a") : "mp4"
+  const ext = type === "audio" ? "mp3" : "mp4"
   const { asciiName, encodedName } = sanitizeFileName(rawName, ext)
 
+  // =========================================================================
+  // 1. FAST STREAM RESOLUTION VIA `yt-dlp -g`
+  // Extrai o link direto de CDN do vídeo/áudio em 2 a 4 segundos e faz stream HTTP
+  // diretamente para o cliente, sem encher o disco efêmero do serverless da Vercel!
+  // =========================================================================
+  try {
+    const formatSelector =
+      type === "audio"
+        ? "ba[ext=m4a]/ba/bestaudio/b"
+        : "b[ext=mp4]/b/best"
+
+    const gArgs = [
+      ...prefixArgs,
+      "-g",
+      "--no-playlist",
+      "--extractor-args",
+      "youtube:player_client=android,ios,web",
+      "--user-agent",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "-f",
+      formatSelector,
+      targetUrl,
+    ]
+
+    console.log(`[Download API] Extraindo URL direta via yt-dlp -g para ${targetUrl.slice(0, 60)}...`)
+    const { stdout } = await execFileAsync(bin, gArgs, {
+      timeout: 20000,
+      maxBuffer: 10 * 1024 * 1024,
+    })
+
+    const lines = stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("http://") || l.startsWith("https://"))
+
+    if (lines.length > 0) {
+      const streamUrl = lines[0]
+      console.log(`[Download API] Stream URL obtida com sucesso: ${streamUrl.slice(0, 60)}...`)
+
+      const upstreamHeaders: Record<string, string> = {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "*/*",
+        Referer:
+          targetUrl.includes("youtube") || targetUrl.includes("youtu.be")
+            ? "https://www.youtube.com/"
+            : targetUrl,
+      }
+      if (clientRange) {
+        upstreamHeaders["Range"] = clientRange
+      }
+
+      const upstreamRes = await fetch(streamUrl, {
+        headers: upstreamHeaders,
+        cache: "no-store",
+      })
+
+      if (upstreamRes.ok && upstreamRes.body) {
+        const rawCt = (upstreamRes.headers.get("content-type") || "").toLowerCase()
+        const isForbiddenPayload =
+          rawCt.includes("text/html") ||
+          rawCt.includes("text/plain") ||
+          rawCt.includes("application/json")
+
+        if (!isForbiddenPayload) {
+          const finalContentType =
+            type === "audio"
+              ? (rawCt.includes("audio") ? rawCt : "audio/mp4")
+              : (rawCt || "video/mp4")
+
+          const headers = new Headers()
+          headers.set("Content-Type", finalContentType)
+          headers.set(
+            "Content-Disposition",
+            `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${encodedName}`,
+          )
+          headers.set("Accept-Ranges", "bytes")
+          headers.set("Content-Transfer-Encoding", "binary")
+          headers.set("Cache-Control", "public, max-age=3600")
+
+          const clen = upstreamRes.headers.get("content-length")
+          if (clen) headers.set("Content-Length", clen)
+
+          const crange = upstreamRes.headers.get("content-range")
+          if (crange) headers.set("Content-Range", crange)
+
+          const statusCode = upstreamRes.status === 206 ? 206 : 200
+          return new Response(upstreamRes.body, { status: statusCode, headers })
+        }
+      }
+    }
+  } catch (gErr: any) {
+    console.warn(`[Download API] yt-dlp -g falhou (${gErr?.message || gErr}). Ativando fallback em disco...`)
+  }
+
+  // =========================================================================
+  // 2. DISK FALLBACK (Caso -g falhe ou FFmpeg local esteja disponível)
+  // =========================================================================
   const tempPrefix = `tiksave_${Date.now()}_${Math.random().toString(36).slice(2)}`
   const templatePath = path.join(os.tmpdir(), `${tempPrefix}.%(ext)s`)
 
@@ -334,6 +467,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "URL de arquivo inválida." }, { status: 400 })
   }
 
+  const clientRange = request.headers.get("range")
   let ext = type === "audio" ? "mp3" : type === "image" ? "jpg" : "mp4"
   const { asciiName, encodedName } = sanitizeFileName(rawName, ext)
 
@@ -346,7 +480,12 @@ export async function GET(request: NextRequest) {
 
   if (isYouTube || isSocialPage) {
     const target = isYouTube ? fileUrl : (originalUrl && isSocialPageUrl(originalUrl) ? originalUrl : fileUrl)
-    const ytStreamResponse = await downloadAndStreamWithYtDlp(target, type === "audio" ? "audio" : "video", rawName)
+    const ytStreamResponse = await downloadAndStreamWithYtDlp(
+      target,
+      type === "audio" ? "audio" : "video",
+      rawName,
+      clientRange,
+    )
     if (ytStreamResponse) {
       return ytStreamResponse
     }
@@ -372,7 +511,6 @@ export async function GET(request: NextRequest) {
 
   // 3. Modo Proxy Direto para URLs de CDN (Instagram, TikTok, Facebook, Twitter, etc.)
   try {
-    const clientRange = request.headers.get("range")
     const upstreamHeaders: Record<string, string> = {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -481,6 +619,7 @@ export async function GET(request: NextRequest) {
       fallbackUrl,
       type === "audio" ? "audio" : "video",
       rawName,
+      clientRange,
     )
     if (fallbackResponse) {
       return fallbackResponse
