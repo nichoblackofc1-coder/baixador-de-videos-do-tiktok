@@ -176,6 +176,81 @@ function normalizeDownloadUrl(raw: string, origin: string): string {
   return current
 }
 
+/** Executa FFmpeg local para extrair áudio MP3 cristalino de streams de vídeo */
+async function extractAudioWithFfmpeg(
+  videoUrl: string,
+  rawName: string,
+): Promise<Response | null> {
+  const ffmpegPath = getFfmpegPath()
+  try {
+    if (!fs.existsSync(ffmpegPath)) return null
+  } catch {
+    return null
+  }
+
+  const { asciiName, encodedName } = sanitizeFileName(rawName, "mp3")
+  const tempPrefix = `tiksave_audio_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const inputPath = path.join(os.tmpdir(), `${tempPrefix}_in.mp4`)
+  const outputPath = path.join(os.tmpdir(), `${tempPrefix}_out.mp3`)
+
+  try {
+    const upstreamHeaders: Record<string, string> = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "*/*",
+    }
+    if (videoUrl.includes("instagram") || videoUrl.includes("fbcdn")) {
+      upstreamHeaders["Referer"] = "https://www.instagram.com/"
+    } else if (videoUrl.includes("tiktok") || videoUrl.includes("tikwm")) {
+      upstreamHeaders["Referer"] = "https://www.tiktok.com/"
+    }
+
+    const res = await fetch(videoUrl, { headers: upstreamHeaders })
+    if (!res.ok || !res.body) return null
+    const buffer = Buffer.from(await res.arrayBuffer())
+    await fs.promises.writeFile(inputPath, buffer)
+
+    await execFileAsync(ffmpegPath, [
+      "-i",
+      inputPath,
+      "-vn",
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      "192k",
+      outputPath,
+      "-y",
+    ], { timeout: 30000 })
+
+    const stat = await fs.promises.stat(outputPath)
+    const fileStream = fs.createReadStream(outputPath)
+    fileStream.on("close", () => {
+      fs.promises.unlink(inputPath).catch(() => {})
+      fs.promises.unlink(outputPath).catch(() => {})
+    })
+    fileStream.on("error", () => {
+      fs.promises.unlink(inputPath).catch(() => {})
+      fs.promises.unlink(outputPath).catch(() => {})
+    })
+
+    const webStream = Readable.toWeb(fileStream)
+    return new Response(webStream as any, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Content-Disposition": `attachment; filename="${asciiName}.mp3"; filename*=UTF-8''${encodedName}`,
+        "Content-Length": String(stat.size),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=3600",
+      },
+    })
+  } catch (err) {
+    fs.promises.unlink(inputPath).catch(() => {})
+    fs.promises.unlink(outputPath).catch(() => {})
+    return null
+  }
+}
+
 export async function GET(request: NextRequest) {
   const rawUrl = request.nextUrl.searchParams.get("url") || ""
   const origin = request.nextUrl.origin
@@ -193,19 +268,40 @@ export async function GET(request: NextRequest) {
   let ext = type === "audio" ? "mp3" : type === "image" ? "jpg" : "mp4"
   const { asciiName, encodedName } = sanitizeFileName(rawName, ext)
 
-  // 1. Se for YouTube, ou solicitação de áudio de uma página social, ou se a URL for a própria página de vídeo
-  const isYouTube = fileUrl.includes("youtube.com") || fileUrl.includes("youtu.be") || fileUrl.includes("googlevideo.com")
-  const needsYtDlp = isYouTube || (type === "audio" && !fileUrl.includes(".mp3")) || isSocialPageUrl(fileUrl)
+  // 1. Se for YouTube ou uma página social direta, precisa de download via yt-dlp
+  const isYouTube =
+    fileUrl.includes("youtube.com") ||
+    fileUrl.includes("youtu.be") ||
+    fileUrl.includes("googlevideo.com")
+  const isSocialPage = isSocialPageUrl(fileUrl)
 
-  if (needsYtDlp) {
+  if (isYouTube || isSocialPage) {
     const target = isYouTube ? fileUrl : (originalUrl && isSocialPageUrl(originalUrl) ? originalUrl : fileUrl)
     const ytStreamResponse = await downloadAndStreamWithYtDlp(target, type === "audio" ? "audio" : "video", rawName)
     if (ytStreamResponse) {
       return ytStreamResponse
     }
+
+    // Se é uma página web social e o yt-dlp não conseguiu processar (ex: sem Python no servidor),
+    // NUNCA faça proxy direto do HTML da página web para evitar arquivos corrompidos!
+    if (isSocialPage) {
+      return NextResponse.json(
+        { error: "Não foi possível extrair a mídia direta desta página no momento." },
+        { status: 400 },
+      )
+    }
   }
 
-  // 2. Modo Proxy Direto para URLs de CDN (Instagram, TikTok, Facebook, Twitter, etc.)
+  // 2. Se o usuário solicitou áudio e o link aponta para um stream de vídeo MP4
+  if (type === "audio") {
+    // Tenta primeiro extrair MP3 com FFmpeg se disponível
+    const ffmpegAudioResponse = await extractAudioWithFfmpeg(fileUrl, rawName)
+    if (ffmpegAudioResponse) {
+      return ffmpegAudioResponse
+    }
+  }
+
+  // 3. Modo Proxy Direto para URLs de CDN (Instagram, TikTok, Facebook, Twitter, etc.)
   try {
     const clientRange = request.headers.get("range")
     const upstreamHeaders: Record<string, string> = {
@@ -232,36 +328,75 @@ export async function GET(request: NextRequest) {
     })
 
     if (upstream.ok && upstream.body) {
-      const contentType =
-        upstream.headers.get("content-type") ||
-        (type === "audio"
-          ? "audio/mpeg"
-          : type === "image"
-            ? "image/jpeg"
-            : "video/mp4")
+      const rawContentType = (upstream.headers.get("content-type") || "").toLowerCase()
 
-      const headers = new Headers()
-      headers.set("Content-Type", contentType)
-      headers.set(
-        "Content-Disposition",
-        `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${encodedName}`,
-      )
-      headers.set("Accept-Ranges", "bytes")
-      headers.set("Content-Transfer-Encoding", "binary")
-      headers.set("Cache-Control", "public, max-age=3600")
+      // GUARD CRÍTICO ANTI-CORRUPÇÃO: Se o upstream retornou HTML ou texto, NUNCA envie como mídia!
+      if (
+        rawContentType.includes("text/html") ||
+        rawContentType.includes("text/plain") ||
+        rawContentType.includes("application/json")
+      ) {
+        console.warn(
+          `[Download API] Upstream retornou conteúdo não-mídia (${rawContentType}) para ${fileUrl.slice(0, 80)}`,
+        )
+      } else {
+        const isAudioMpeg =
+          rawContentType.includes("audio/mpeg") ||
+          rawContentType.includes("audio/mp3") ||
+          fileUrl.includes("audio_mpeg") ||
+          fileUrl.includes(".mp3")
 
-      const contentLength = upstream.headers.get("content-length")
-      if (contentLength) {
-        headers.set("Content-Length", contentLength)
+        const isAudioMp4 =
+          type === "audio" &&
+          (rawContentType.includes("video/mp4") ||
+            rawContentType.includes("audio/mp4") ||
+            fileUrl.includes(".mp4"))
+
+        let finalExt = ext
+        let finalContentType = rawContentType || "video/mp4"
+
+        if (type === "audio") {
+          if (isAudioMpeg) {
+            finalExt = "mp3"
+            finalContentType = "audio/mpeg"
+          } else if (isAudioMp4) {
+            finalExt = "m4a"
+            finalContentType = "audio/mp4"
+          } else {
+            finalExt = "mp3"
+            finalContentType = "audio/mpeg"
+          }
+        }
+
+        const safeExt = finalExt
+        const { asciiName: actualAscii, encodedName: actualEncoded } = sanitizeFileName(
+          rawName,
+          safeExt,
+        )
+
+        const headers = new Headers()
+        headers.set("Content-Type", finalContentType)
+        headers.set(
+          "Content-Disposition",
+          `attachment; filename="${actualAscii}.${safeExt}"; filename*=UTF-8''${actualEncoded}`,
+        )
+        headers.set("Accept-Ranges", "bytes")
+        headers.set("Content-Transfer-Encoding", "binary")
+        headers.set("Cache-Control", "public, max-age=3600")
+
+        const contentLength = upstream.headers.get("content-length")
+        if (contentLength) {
+          headers.set("Content-Length", contentLength)
+        }
+
+        const contentRange = upstream.headers.get("content-range")
+        if (contentRange) {
+          headers.set("Content-Range", contentRange)
+        }
+
+        const statusCode = upstream.status === 206 ? 206 : 200
+        return new Response(upstream.body, { status: statusCode, headers })
       }
-
-      const contentRange = upstream.headers.get("content-range")
-      if (contentRange) {
-        headers.set("Content-Range", contentRange)
-      }
-
-      const statusCode = upstream.status === 206 ? 206 : 200
-      return new Response(upstream.body, { status: statusCode, headers })
     }
 
     console.warn(`[Download API] Upstream fetch retornou status ${upstream.status} para ${fileUrl.slice(0, 80)}`)
@@ -269,7 +404,7 @@ export async function GET(request: NextRequest) {
     console.warn(`[Download API] Erro no fetch upstream para ${fileUrl.slice(0, 80)}:`, err)
   }
 
-  // 3. Fallback de contingência: se o fetch direto da CDN falhou, executa o yt-dlp usando a URL original da página
+  // 4. Fallback de contingência: se o fetch direto falhou e temos a URL original da página
   const fallbackUrl = originalUrl || fileUrl
   if (isSocialPageUrl(fallbackUrl)) {
     console.log(`[Download API] Ativando fallback yt-dlp para ${fallbackUrl}`)

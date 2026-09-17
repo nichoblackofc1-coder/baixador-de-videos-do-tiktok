@@ -175,10 +175,54 @@ export async function extractYouTube(rawUrl: string): Promise<UniversalMediaResu
 }
 
 /* =========================================================================
-   2. INSTAGRAM EXTRACTOR (yt-dlp local + oEmbed fallback puro Node.js)
+   2. INSTAGRAM EXTRACTOR (btch.igdl puro Node.js + yt-dlp fallback)
    ========================================================================= */
 export async function extractInstagram(rawUrl: string): Promise<UniversalMediaResult | null> {
-  // 1. Tenta yt-dlp (obtém URL direta .mp4 da CDN da Meta fbcdn.net)
+  // Estratégia 1: Extração direta pura Node.js via btch.igdl e oEmbed em paralelo (funciona 100% na Vercel e Localhost)
+  try {
+    const [btchRes, oembedRes] = await Promise.all([
+      import("btch-downloader")
+        .then((m) => (m.default || m).igdl(rawUrl))
+        .catch(() => null),
+      fetch(`https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(rawUrl)}`, {
+        signal: AbortSignal.timeout(4000),
+        cache: "no-store",
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+    ])
+
+    const validMedia = btchRes?.result?.find((r: any) => r.url && r.url.length > 5)
+    if (validMedia?.url) {
+      const title =
+        oembedRes?.title?.split("\n")?.[0]?.slice(0, 150) ||
+        "Vídeo do Instagram"
+      const author = oembedRes?.author_name || "Instagram"
+      const cover = validMedia.thumbnail || oembedRes?.thumbnail_url || ""
+      const directUrl = validMedia.url
+
+      return {
+        platform: "instagram",
+        platformName: "Instagram",
+        title: title.replace(/\s+/g, " ").trim(),
+        author,
+        authorUniqueId: `@${author}`,
+        cover,
+        mediaType: "video",
+        quality: "HD Original",
+        mp4: directUrl,
+        downloadUrl: directUrl,
+        music: directUrl,
+        musicTitle: `${title} (Áudio)`,
+        duration: null,
+        original: rawUrl,
+      }
+    }
+  } catch (err) {
+    console.warn("[Instagram Extractor] Erro no btch.igdl:", err)
+  }
+
+  // Estratégia 2: yt-dlp local se Python estiver disponível
   if (isPythonAvailable()) {
     const data = await runYtDlpJson(rawUrl)
     if (data) {
@@ -204,45 +248,14 @@ export async function extractInstagram(rawUrl: string): Promise<UniversalMediaRe
           quality: "HD Original",
           mp4: isVideo ? directUrl : "",
           downloadUrl: directUrl,
-          music: rawUrl,
-          musicTitle: `${title} (Áudio MP3)`,
+          music: directUrl,
+          musicTitle: `${title} (Áudio)`,
           duration: data.duration ?? null,
           original: rawUrl,
         }
       }
     }
   }
-
-  // 2. Fallback via oEmbed do Instagram (funciona em produção sem Python)
-  try {
-    const res = await fetch(
-      `https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(rawUrl)}`,
-      { signal: AbortSignal.timeout(4000), cache: "no-store" },
-    )
-    if (res.ok) {
-      const oembed = await res.json()
-      if (oembed?.thumbnail_url || oembed?.title) {
-        const title = oembed.title?.split("\n")?.[0]?.slice(0, 150) || "Publicação do Instagram"
-        const author = oembed.author_name || "Instagram"
-        const cover = oembed.thumbnail_url || ""
-        return {
-          platform: "instagram",
-          platformName: "Instagram",
-          title,
-          author,
-          authorUniqueId: `@${author}`,
-          cover,
-          mediaType: "video",
-          quality: "HD Original",
-          mp4: rawUrl,
-          downloadUrl: rawUrl,
-          music: rawUrl,
-          duration: null,
-          original: rawUrl,
-        }
-      }
-    }
-  } catch {}
 
   return null
 }
@@ -307,7 +320,7 @@ export async function extractTikTok(rawUrl: string): Promise<UniversalMediaResul
             music:
               typeof data.music === "string" && data.music.startsWith("http")
                 ? data.music
-                : targetUrl,
+                : mp4,
             musicTitle: data.music_info?.title || "Áudio Original",
             duration: data.duration ?? null,
             original: rawUrl,
@@ -332,7 +345,7 @@ export async function extractTikTok(rawUrl: string): Promise<UniversalMediaResul
         quality: "HD Sem Marca",
         mp4: ytData.url,
         downloadUrl: ytData.url,
-        music: targetUrl,
+        music: ytData.url,
         duration: ytData.duration ?? null,
         original: rawUrl,
       }
@@ -363,7 +376,7 @@ export async function extractFacebook(rawUrl: string): Promise<UniversalMediaRes
           quality: best.resolution || "HD",
           mp4: best.url,
           downloadUrl: best.url,
-          music: rawUrl,
+          music: best.url,
           duration: null,
           original: rawUrl,
         }
@@ -388,7 +401,7 @@ export async function extractFacebook(rawUrl: string): Promise<UniversalMediaRes
           quality: "HD Original",
           mp4: directUrl,
           downloadUrl: directUrl,
-          music: rawUrl,
+          music: directUrl,
           duration: data.duration ?? null,
           original: rawUrl,
         }
@@ -437,7 +450,7 @@ export async function extractTwitter(rawUrl: string): Promise<UniversalMediaResu
             quality: isVideo ? "HD" : "Alta Resolução",
             mp4,
             downloadUrl,
-            music: isVideo ? rawUrl : undefined,
+            music: isVideo ? mp4 : undefined,
             duration: null,
             original: rawUrl,
           }
@@ -459,6 +472,7 @@ export async function extractTwitter(rawUrl: string): Promise<UniversalMediaResu
         quality: "HD",
         mp4: ytData.url,
         downloadUrl: ytData.url,
+        music: ytData.url,
         duration: ytData.duration ?? null,
         original: rawUrl,
       }
@@ -512,6 +526,7 @@ export async function extractPinterest(rawUrl: string): Promise<UniversalMediaRe
         quality: "Resolução Original",
         mp4: bestVid,
         downloadUrl: downloadTarget,
+        music: bestVid || undefined,
         duration: null,
         original: rawUrl,
       }
@@ -532,6 +547,7 @@ export async function extractPinterest(rawUrl: string): Promise<UniversalMediaRe
         quality: "Resolução Original",
         mp4: isVideo ? ytData.url : "",
         downloadUrl: ytData.url || ytData.thumbnail,
+        music: isVideo ? ytData.url : undefined,
         duration: ytData.duration ?? null,
         original: rawUrl,
       }
@@ -569,6 +585,7 @@ export async function extractKwai(rawUrl: string): Promise<UniversalMediaResult 
         quality: "HD Sem Marca",
         mp4: ogVid,
         downloadUrl: ogVid,
+        music: ogVid,
         duration: null,
         original: rawUrl,
       }
@@ -588,6 +605,7 @@ export async function extractKwai(rawUrl: string): Promise<UniversalMediaResult 
         quality: "HD Sem Marca",
         mp4: ytData.url,
         downloadUrl: ytData.url,
+        music: ytData.url,
         duration: ytData.duration ?? null,
         original: rawUrl,
       }
@@ -616,7 +634,7 @@ export async function extractUniversalFallback(rawUrl: string): Promise<Universa
         quality: "Resolução Original",
         mp4: isVideo ? ytData.url : "",
         downloadUrl: downloadTarget,
-        music: isVideo ? rawUrl : undefined,
+        music: isVideo ? ytData.url : undefined,
         duration: ytData.duration ?? null,
         original: rawUrl,
       }
@@ -664,6 +682,7 @@ export async function extractUniversalFallback(rawUrl: string): Promise<Universa
         quality: "Original",
         mp4: ogVid || "",
         downloadUrl,
+        music: isVideo ? ogVid : undefined,
         duration: null,
         original: rawUrl,
       }
