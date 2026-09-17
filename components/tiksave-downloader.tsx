@@ -48,10 +48,13 @@ function buildDownloadHref(
   fileUrl: string,
   type: "video" | "audio" | "image",
   name: string,
-  direct?: boolean,
+  original?: string,
 ) {
+  if (fileUrl.startsWith("/api/download")) {
+    return fileUrl
+  }
   const params = new URLSearchParams({ url: fileUrl, type, name })
-  if (direct) params.set("direct", "1")
+  if (original && original !== fileUrl) params.set("original", original)
   return `/api/download?${params.toString()}`
 }
 
@@ -120,77 +123,35 @@ export function TikSaveDownloader() {
   ) {
     if (downloadProgress.type) return
 
-    if (mediaUrl.includes("ssyoutube") || mediaUrl.includes("savefrom") || mediaUrl.includes("y2mate")) {
-      window.open(mediaUrl, "_blank")
-      return
-    }
-
     const ext = type === "audio" ? "mp3" : type === "image" ? "jpg" : "mp4"
     const fileName = safeFileName(rawTitle, ext)
 
     setDownloadProgress({
       type,
-      percent: 10,
-      label: "Iniciando...",
+      percent: 15,
+      label: "Preparando download...",
     })
 
+    const downloadApiUrl = buildDownloadHref(mediaUrl, type, rawTitle, result?.original)
+
     try {
-      const downloadApiUrl = buildDownloadHref(mediaUrl, type, rawTitle)
+      setDownloadProgress({
+        type,
+        percent: 45,
+        label: "Baixando mídia...",
+      })
 
-      // Fetch com credenciais para evitar bloqueios de SSO da Vercel e antivírus
-      const res = await fetch(downloadApiUrl, { credentials: "include" })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
-      const contentLength = res.headers.get("content-length")
-      const total = contentLength ? parseInt(contentLength, 10) : 0
-
-      if (res.body && total > 0) {
-        const reader = res.body.getReader()
-        let received = 0
-        const chunks: Uint8Array[] = []
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          chunks.push(value)
-          received += value.length
-          const pct = Math.min(99, Math.round((received / total) * 100))
-          setDownloadProgress({
-            type,
-            percent: pct,
-            label: `${pct}% (${(received / 1024 / 1024).toFixed(1)}MB)`,
-          })
-        }
-
-        const mime =
-          type === "audio"
-            ? "audio/mpeg"
-            : type === "image"
-              ? "image/jpeg"
-              : "video/mp4"
-        const blob = new Blob(chunks, { type: mime })
-        const blobUrl = window.URL.createObjectURL(blob)
-
-        const a = document.createElement("a")
-        a.href = blobUrl
-        a.download = fileName
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 30000)
-
-        setDownloadProgress({
-          type,
-          percent: 100,
-          label: t.downloadStarted || "Download concluído!",
-        })
-        setTimeout(() => {
-          setDownloadProgress({ type: null, percent: 0, label: "" })
-        }, 3000)
-        return
+      const res = await fetch(downloadApiUrl)
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
       }
 
-      // Fallback sem stream: converte para blob direto
+      setDownloadProgress({
+        type,
+        percent: 85,
+        label: "Salvando no computador...",
+      })
+
       const blob = await res.blob()
       const blobUrl = window.URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -208,12 +169,24 @@ export function TikSaveDownloader() {
       })
       setTimeout(() => {
         setDownloadProgress({ type: null, percent: 0, label: "" })
-      }, 3000)
+      }, 3500)
     } catch (err) {
-      console.warn("[Download] Proxy via stream indisponível, abrindo direto da CDN:", err)
-      // Fallback 100% infalível: Abre direto da CDN da rede
-      window.open(mediaUrl, "_blank")
-      setDownloadProgress({ type: null, percent: 0, label: "" })
+      console.warn("[Download] Falha no blob em memória, acionando download nativo:", err)
+      const a = document.createElement("a")
+      a.href = downloadApiUrl
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+
+      setDownloadProgress({
+        type,
+        percent: 100,
+        label: "Iniciando download...",
+      })
+      setTimeout(() => {
+        setDownloadProgress({ type: null, percent: 0, label: "" })
+      }, 3500)
     }
   }
 
@@ -697,32 +670,25 @@ export function TikSaveDownloader() {
                   </button>
                 ) : null}
 
-                {/* Servidor Alternativo para YouTube ou Link Direto CDN */}
-                {result.platform === "youtube" ? (
-                  <div className="pt-0.5 text-center">
-                    <a
-                      href={`https://ssyoutube.com/watch?v=${result.videoId || ""}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors font-semibold"
-                    >
-                      <ExternalLink className="size-3.5 text-blue-500" />
-                      <span>⚡ Baixar via Servidor de Alta Velocidade (1080p / MP3)</span>
-                    </a>
-                  </div>
-                ) : result.mediaType === "video" && result.mp4 ? (
-                  <div className="pt-0.5 text-center">
-                    <a
-                      href={result.mp4}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors font-medium"
-                    >
-                      <ExternalLink className="size-3.5 text-blue-500" />
-                      <span>⚡ Link direto alternativo (CDN)</span>
-                    </a>
-                  </div>
-                ) : null}
+                {/* Link de Contingência Direta (sem popup nem redirecionamento externo) */}
+                <div className="pt-1 text-center">
+                  <a
+                    href={buildDownloadHref(
+                      result.mp4 || result.downloadUrl || "",
+                      result.mediaType === "video" ? "video" : "image",
+                      result.title,
+                      result.original,
+                    )}
+                    download={safeFileName(
+                      result.title,
+                      result.mediaType === "video" ? "mp4" : "jpg",
+                    )}
+                    className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors font-medium"
+                  >
+                    <Download className="size-3.5 text-blue-500" />
+                    <span>Se o download não iniciar automaticamente, clique aqui</span>
+                  </a>
+                </div>
 
                 {/* Botões Utilitários */}
                 <div className="grid grid-cols-2 gap-2.5 pt-1">
